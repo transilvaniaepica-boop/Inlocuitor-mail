@@ -1,0 +1,35 @@
+{
+  "name": "inlocuitor-mail-simplificat",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"node server/index.js\" \"vite --port 5175\"",
+    "server": "node server/index.js",
+    "client": "vite --port 5175",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "concurrently": "^10.0.5",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "express-session": "^1.19.0",
+    "imapflow": "^1.7.2",
+    "lucide-react": "^1.31.0",
+    "mailparser": "^3.9.15",
+    "nodemailer": "^9.0.5",
+    "otplib": "^12.0.1",
+    "qrcode": "^1.5.4",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "sqlite3": "^6.0.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.4",
+    "vite": "^8.2.0"
+  }
+}
