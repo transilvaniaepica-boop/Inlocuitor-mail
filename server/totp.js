@@ -72,9 +72,9 @@ function generateTOTP(secretBase32, timeStep = 30, forTime = Date.now()) {
 }
 
 // Verificare cod cu toleranta +/- 1 fereastra (60s total pentru decalaj ceas)
-function verifyTOTP(token, secretBase32, window = 1, timeStep = 30) {
+function verifyTOTP(token, secretBase32, window = 4, timeStep = 30) {
   if (!token || !secretBase32) return false;
-  const cleanToken = token.toString().trim();
+  const cleanToken = token.toString().replace(/\D/g, "");
   const now = Date.now();
 
   for (let i = -window; i <= window; i++) {

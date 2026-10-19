@@ -104,7 +104,8 @@ app.post('/api/auth/verify-2fa', async (req, res) => {
       return res.status(400).json({ error: 'Sesiunea de autentificare a expirat. Reluați pasul 1.' });
     }
 
-    if (!token || token.trim().length !== 6) {
+    const checkToken = token ? token.toString().replace(/\D/g, '') : '';
+    if (checkToken.length !== 6) {
       return res.status(400).json({ error: 'Codul de verificare trebuie să conțină exact 6 cifre.' });
     }
 
@@ -113,7 +114,9 @@ app.post('/api/auth/verify-2fa', async (req, res) => {
       return res.status(400).json({ error: 'Configurația 2FA a utilizatorului nu este validă.' });
     }
 
-    const isValid = verifyTOTP(token.trim(), user.two_factor_secret);
+    const cleanToken = token ? token.toString().replace(/\D/g, "") : "";
+    const isValid = verifyTOTP(cleanToken, user.two_factor_secret, 4);
+    console.log();
     if (!isValid) {
       return res.status(401).json({ error: 'Codul din Google Authenticator este incorect sau a expirat.' });
     }
@@ -141,6 +144,61 @@ app.post('/api/auth/verify-2fa', async (req, res) => {
 });
 
 // Informatii utilizator curent
+
+// Generator cod 2FA direct in browser (fara telefon, pentru testare si utilizare din browser)
+app.get('/api/auth/current-2fa-token', async (req, res) => {
+  try {
+    const userId = req.session.pendingUserId || req.session.userId;
+    if (!userId) {
+      return res.status(400).json({ error: 'Nicio sesiune de autentificare activă.' });
+    }
+
+    const user = await dbAsync.get('SELECT username, two_factor_secret FROM users WHERE id = ?', [userId]);
+    if (!user || !user.two_factor_secret) {
+      return res.status(400).json({ error: 'Utilizatorul nu are 2FA configurat.' });
+    }
+
+    const step = 30;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const remainingSeconds = step - (nowSec % step);
+    const { generateTOTP } = require('./totp');
+    const token = generateTOTP(user.two_factor_secret);
+
+    res.json({
+      success: true,
+      token,
+      remainingSeconds,
+      username: user.username
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Generator cod 2FA pentru admin (vizualizare live cod in panou fara telefon)
+app.get('/api/admin/users/:id/current-token', requireAdmin, async (req, res) => {
+  try {
+    const user = await dbAsync.get('SELECT username, two_factor_secret FROM users WHERE id = ?', [req.params.id]);
+    if (!user || !user.two_factor_secret) {
+      return res.status(400).json({ error: 'Utilizatorul nu are cheie secretă 2FA.' });
+    }
+    const step = 30;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const remainingSeconds = step - (nowSec % step);
+    const { generateTOTP } = require('./totp');
+    const token = generateTOTP(user.two_factor_secret);
+
+    res.json({
+      success: true,
+      token,
+      remainingSeconds,
+      username: user.username
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/auth/me', async (req, res) => {
   try {
     if (!req.session.userId) {

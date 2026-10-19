@@ -762,6 +762,26 @@ export default function AdminPanel({
                   <button type="button" className="btn btn-secondary btn-sm" onClick={handleTest2FACode}>
                     Verifică
                   </button>
+                  <button 
+                    type="button" 
+                    className="btn btn-secondary btn-sm" 
+                    title="Generează codul acum direct din calculator fără telefon"
+                    onClick={async () => {
+                      try {
+                        const res = await fetch(`/api/admin/users/${selectedUser2FA.id}/current-token`);
+                        const d = await res.json();
+                        if (d.token) {
+                          setVerifyTestCode(d.token);
+                          setVerifyStatus({ ok: true, msg: `Cod generat din browser: ${d.token} (expiră în ${d.remainingSeconds}s)` });
+                        }
+                      } catch (err) {
+                        console.error(err);
+                      }
+                    }}
+                    style={{ background: 'rgba(99, 102, 241, 0.25)', color: '#c7d2fe' }}
+                  >
+                    Generează din Browser
+                  </button>
                 </div>
 
                 {verifyStatus && (
