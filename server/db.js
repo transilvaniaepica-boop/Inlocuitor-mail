@@ -3,13 +3,23 @@ const path = require('path');
 const fs = require('fs');
 const bcrypt = require('bcryptjs');
 
-// Stocare baza de date intr-o cale locala sigura pentru a preveni SIGBUS pe unitati externe exFAT/SMB
-const localDir = path.join(process.env.HOME || '/tmp', '.inlocuitor_mail_simplificat');
-if (!fs.existsSync(localDir)) {
-  fs.mkdirSync(localDir, { recursive: true });
-}
-const dbPath = path.join(localDir, 'database.sqlite');
-console.log('[DB] Local SQLite Database:', dbPath);
+// Stocare baza de date:
+// - Render.com: /data (disk persistent montat)
+// - Local: ~/.inlocuitor_mail_simplificat/
+// - Fallback: /tmp
+const getDbDir = () => {
+  if (process.env.NODE_ENV === 'production' && fs.existsSync('/data')) {
+    return '/data';
+  }
+  const localDir = path.join(process.env.HOME || '/tmp', '.inlocuitor_mail_simplificat');
+  if (!fs.existsSync(localDir)) {
+    fs.mkdirSync(localDir, { recursive: true });
+  }
+  return localDir;
+};
+const dbDir = getDbDir();
+const dbPath = path.join(dbDir, 'database.sqlite');
+console.log('[DB] SQLite Database:', dbPath);
 
 const db = new sqlite3.Database(dbPath);
 

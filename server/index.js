@@ -1,4 +1,6 @@
 const express = require('express');
+const path = require('path');
+const fs = require('fs');
 const cors = require('cors');
 const session = require('express-session');
 const bcrypt = require('bcryptjs');
@@ -17,7 +19,7 @@ app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 app.use(session({
-  secret: 'inlocuitor-mail-simplificat-super-secure-key-2026',
+  secret: process.env.SESSION_SECRET || 'inlocuitor-mail-simplificat-super-secure-key-2026',
   resave: false,
   saveUninitialized: false,
   cookie: {
@@ -899,6 +901,20 @@ app.get('/api/stats', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+
+// Servire frontend React (productie)
+const distPath = path.join(__dirname, '..', 'dist');
+if (require('fs').existsSync(distPath)) {
+  app.use(express.static(distPath));
+  // SPA fallback: toate rutele non-API servesc index.html
+  app.get('*', (req, res) => {
+    if (!req.path.startsWith('/api')) {
+      res.sendFile(path.join(distPath, 'index.html'));
+    }
+  });
+  console.log('[STATIC] Servire frontend din:', distPath);
+}
 
 app.listen(PORT, () => {
   console.log(`=======================================================`);

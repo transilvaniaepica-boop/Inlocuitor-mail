@@ -8,7 +8,9 @@
     "server": "node server/index.js",
     "client": "vite --port 5175",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "start": "node server/index.js",
+    "build:full": "vite build"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
@@ -31,5 +33,8 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.4",
     "vite": "^8.2.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
