@@ -233,3 +233,7 @@ module.exports = { db, dbAsync };
   // Migrari sigure pentru coloane utilizator
   db.run("ALTER TABLE users ADD COLUMN hierarchy_id INTEGER", () => {});
   db.run("ALTER TABLE users ADD COLUMN job_title TEXT", () => {});
+
+  // Migrari IMAP individual per utilizator
+  db.run("ALTER TABLE users ADD COLUMN imap_user TEXT", () => {});
+  db.run("ALTER TABLE users ADD COLUMN imap_pass TEXT", () => {});

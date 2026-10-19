@@ -36,6 +36,8 @@ export default function AdminPanel({
   const [userFormRole, setUserFormRole] = useState('user');
   const [userFormJobTitle, setUserFormJobTitle] = useState('');
   const [userFormHierarchyId, setUserFormHierarchyId] = useState('');
+  const [userFormImapUser, setUserFormImapUser] = useState('');
+  const [userFormImapPass, setUserFormImapPass] = useState('');
 
   // Stari pentru 2FA
   const [twoFaModalOpen, setTwoFaModalOpen] = useState(false);
@@ -96,6 +98,8 @@ export default function AdminPanel({
     setUserFormRole('user');
     setUserFormJobTitle('');
     setUserFormHierarchyId(preselectedHierarchyId ? String(preselectedHierarchyId) : '');
+    setUserFormImapUser('');
+    setUserFormImapPass('');
     setUserModalOpen(true);
   };
 
@@ -108,6 +112,8 @@ export default function AdminPanel({
     setUserFormRole(user.role || 'user');
     setUserFormJobTitle(user.job_title || '');
     setUserFormHierarchyId(user.hierarchy_id ? String(user.hierarchy_id) : '');
+    setUserFormImapUser(user.imap_user || '');
+    setUserFormImapPass('');
     setUserModalOpen(true);
   };
 
@@ -125,6 +131,10 @@ export default function AdminPanel({
             role: userFormRole,
             job_title: userFormJobTitle,
             hierarchy_id: userFormHierarchyId,
+            imap_user: userFormImapUser,
+            imap_pass: userFormImapPass,
+            imap_user: userFormImapUser,
+            imap_pass: userFormImapPass,
             password: userFormPassword
           })
         });
@@ -143,7 +153,9 @@ export default function AdminPanel({
             password: userFormPassword,
             role: userFormRole,
             job_title: userFormJobTitle,
-            hierarchy_id: userFormHierarchyId
+            hierarchy_id: userFormHierarchyId,
+            imap_user: userFormImapUser,
+            imap_pass: userFormImapPass
           })
         });
         const data = await res.json();
@@ -618,6 +630,11 @@ export default function AdminPanel({
                             {u.job_title}
                           </div>
                         )}
+                        {u.imap_user && (
+                          <div style={{ fontSize: '0.725rem', color: '#34d399', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            📬 IMAP dedicat: {u.imap_user} {u.has_imap_pass ? '✓' : ''}
+                          </div>
+                        )}
                       </td>
 
                       <td style={{ padding: '14px 20px' }}>
@@ -933,7 +950,7 @@ export default function AdminPanel({
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
                   <div className="form-group">
-                    <label className="form-label">Adresă E-mail</label>
+                    <label className="form-label">Adresă E-mail Notificări</label>
                     <input
                       type="email"
                       value={userFormEmail}
@@ -943,7 +960,7 @@ export default function AdminPanel({
                   </div>
 
                   <div className="form-group">
-                    <label className="form-label">{editingUser ? 'Parolă nouă (opțional)' : 'Parolă de conectare'}</label>
+                    <label className="form-label">{editingUser ? 'Parolă aplicație (opțional)' : 'Parolă conectare aplicație'}</label>
                     <input
                       type="password"
                       required={!editingUser}
@@ -952,6 +969,36 @@ export default function AdminPanel({
                       placeholder={editingUser ? 'Lăsați gol dacă nu schimbați' : 'Introduceți parola...'}
                     />
                   </div>
+                </div>
+
+                {/* SECTIUNE CREDENTIALE IMAP DEDICATE */}
+                <div style={{ background: 'rgba(16, 185, 129, 0.08)', padding: '12px', borderRadius: '8px', border: '1px solid rgba(16, 185, 129, 0.25)' }}>
+                  <label className="form-label" style={{ color: '#6ee7b7', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
+                    📬 Căsuță Poștală IMAP Dedicată (Opțional):
+                  </label>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: '10px' }}>
+                    <div className="form-group">
+                      <label className="form-label" style={{ fontSize: '0.725rem' }}>Utilizator IMAP / Căsuță E-mail</label>
+                      <input
+                        type="text"
+                        value={userFormImapUser}
+                        onChange={(e) => setUserFormImapUser(e.target.value)}
+                        placeholder="ex: ion.popescu@pbasig.ro"
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label" style={{ fontSize: '0.725rem' }}>Parolă IMAP E-mail</label>
+                      <input
+                        type="password"
+                        value={userFormImapPass}
+                        onChange={(e) => setUserFormImapPass(e.target.value)}
+                        placeholder={editingUser && editingUser.has_imap_pass ? '••••••••' : 'Parolă IMAP...'}
+                      />
+                    </div>
+                  </div>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block', marginTop: '4px' }}>
+                    Dacă este completat, acest utilizator se va conecta și își va sincroniza propria căsuță IMAP. Dacă se lasă gol, va folosi căsuța globală a companiei.
+                  </span>
                 </div>
               </div>
 

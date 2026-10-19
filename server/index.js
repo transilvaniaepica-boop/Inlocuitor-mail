@@ -205,7 +205,7 @@ app.get('/api/auth/me', async (req, res) => {
       return res.json({ user: null });
     }
     const user = await dbAsync.get(`
-      SELECT u.id, u.username, u.display_name, u.email, u.role, u.job_title, u.hierarchy_id, u.two_factor_enabled,
+      SELECT u.id, u.username, u.display_name, u.email, u.role, u.job_title, u.hierarchy_id, u.imap_user, (CASE WHEN u.imap_pass IS NOT NULL AND u.imap_pass != '' THEN 1 ELSE 0 END) as has_imap_pass, u.two_factor_enabled,
              h.name as hierarchy_name, h.color as hierarchy_color, h.level_depth
       FROM users u
       LEFT JOIN hierarchy_nodes h ON u.hierarchy_id = h.id
@@ -500,7 +500,7 @@ app.delete('/api/hierarchy/:id', requireAdmin, async (req, res) => {
 app.get('/api/admin/users', requireAdmin, async (req, res) => {
   try {
     const users = await dbAsync.all(`
-      SELECT u.id, u.username, u.display_name, u.email, u.role, u.job_title, u.hierarchy_id,
+      SELECT u.id, u.username, u.display_name, u.email, u.role, u.job_title, u.hierarchy_id, u.imap_user, (CASE WHEN u.imap_pass IS NOT NULL AND u.imap_pass != '' THEN 1 ELSE 0 END) as has_imap_pass,
              u.two_factor_enabled, u.created_at, u.last_login,
              h.name as hierarchy_name, h.color as hierarchy_color, h.level_depth
       FROM users u
@@ -516,7 +516,7 @@ app.get('/api/admin/users', requireAdmin, async (req, res) => {
 // Adaugare utilizator cu pozitie ierarhica si functie
 app.post('/api/admin/users', requireAdmin, async (req, res) => {
   try {
-    const { username, display_name, password, email, role, job_title, hierarchy_id } = req.body;
+    const { username, display_name, password, email, role, job_title, hierarchy_id, imap_user, imap_pass } = req.body;
     if (!username || !password || !display_name) {
       return res.status(400).json({ error: 'Numele de utilizator, numele afișat și parola sunt obligatorii.' });
     }
@@ -529,9 +529,9 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
     const hId = (hierarchy_id === '' || hierarchy_id === null || hierarchy_id === undefined) ? null : parseInt(hierarchy_id);
     const passHash = bcrypt.hashSync(password, 10);
     const result = await dbAsync.run(`
-      INSERT INTO users (username, display_name, password_hash, email, role, job_title, hierarchy_id, two_factor_enabled)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 0)
-    `, [username.trim(), display_name.trim(), passHash, email ? email.trim() : null, role || 'user', job_title ? job_title.trim() : null, hId]);
+      INSERT INTO users (username, display_name, password_hash, email, role, job_title, hierarchy_id, imap_user, imap_pass, two_factor_enabled)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+    `, [username.trim(), display_name.trim(), passHash, email ? email.trim() : null, role || 'user', job_title ? job_title.trim() : null, hId, imap_user ? imap_user.trim() : null, imap_pass ? imap_pass.trim() : null]);
 
     await dbAsync.run('INSERT INTO system_logs (level, message, source) VALUES (?, ?, ?)', [
       'INFO',
@@ -549,12 +549,16 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
 app.put('/api/admin/users/:id', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const { display_name, email, role, job_title, hierarchy_id, password } = req.body;
+    const { display_name, email, role, job_title, hierarchy_id, password, imap_user, imap_pass } = req.body;
 
     const hId = (hierarchy_id === '' || hierarchy_id === null || hierarchy_id === undefined) ? null : parseInt(hierarchy_id);
 
-    let query = 'UPDATE users SET display_name = ?, email = ?, role = ?, job_title = ?, hierarchy_id = ?';
-    let params = [display_name, email ? email.trim() : null, role || 'user', job_title ? job_title.trim() : null, hId];
+    let query = 'UPDATE users SET display_name = ?, email = ?, role = ?, job_title = ?, hierarchy_id = ?, imap_user = ?';
+    let params = [display_name, email ? email.trim() : null, role || 'user', job_title ? job_title.trim() : null, hId, imap_user ? imap_user.trim() : null];
+    if (imap_pass !== undefined && imap_pass !== '') {
+      query += ', imap_pass = ?';
+      params.push(imap_pass.trim());
+    }
 
     if (password && password.trim() !== '') {
       query += ', password_hash = ?';
@@ -702,11 +706,19 @@ app.post('/api/imap/test', requireAdmin, async (req, res) => {
 app.post('/api/imap/sync', async (req, res) => {
   try {
     const settings = await dbAsync.get('SELECT * FROM imap_settings WHERE id = 1');
-    if (!settings || !settings.host || !settings.username) {
+    if (!settings || !settings.host) {
       return res.status(400).json({ error: 'Serverul IMAP nu este configurat.' });
     }
 
-    const syncRes = await syncImap(settings);
+    let targetUser = null;
+    if (req.session.userId) {
+      const u = await dbAsync.get('SELECT * FROM users WHERE id = ?', [req.session.userId]);
+      if (u && u.imap_user && u.imap_pass) {
+        targetUser = u;
+      }
+    }
+
+    const syncRes = await syncImap(settings, targetUser);
     res.json(syncRes);
   } catch (err) {
     res.status(500).json({ error: 'Eroare la sincronizare: ' + err.message });

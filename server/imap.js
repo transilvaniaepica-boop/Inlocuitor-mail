@@ -37,12 +37,14 @@ async function testImapConnection(settings) {
   };
 }
 
-async function syncImap(settings) {
+async function syncImap(settings, specificUser = null) {
   const host = settings.host;
   const port = parseInt(settings.port) || 993;
-  const user = settings.username;
-  const pass = settings.password;
   const tls = settings.tls !== 0;
+
+  // Daca utilizatorul are casuta IMAP proprie configurata
+  const user = (specificUser && specificUser.imap_user) ? specificUser.imap_user : settings.username;
+  const pass = (specificUser && specificUser.imap_pass) ? specificUser.imap_pass : settings.password;
 
   if (!host || !user || !pass) {
     return { success: false, message: 'Setările IMAP nu sunt configurate complet.' };
