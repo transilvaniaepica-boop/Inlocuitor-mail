@@ -7,8 +7,8 @@
     "dev": "concurrently \"node server/index.js\" \"vite --port 5175\"",
     "server": "node server/index.js",
     "client": "vite --port 5175",
-    "build": "vite build",
-    "preview": "vite preview",
+    "build": "npx vite build",
+    "preview": "npx vite preview",
     "start": "node server/index.js",
     "build:full": "vite build"
   },
