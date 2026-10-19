@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Production build
+dist/
+
+# SQLite databases
+*.sqlite
+*.sqlite-journal
+*.db
+
+# Environment and sensitive keys
+.env
+.env.local
+
+# OS files
+.DS_Store
+Thumbs.db
