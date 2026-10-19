@@ -56,17 +56,37 @@ export default function Navbar({
           </button>
         )}
 
-        {/* Informatii Utilizator */}
+        {/* Informatii Utilizator & Pozitie Ierarhica */}
         {user ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: '12px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginLeft: '12px' }}>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-              <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>{user.displayName}</span>
-              <span style={{ fontSize: '0.7rem', color: user.twoFactorEnabled ? '#34d399' : '#94a3b8', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                {user.twoFactorEnabled && <CheckCircle2 size={11} />}
-                {user.twoFactorEnabled ? '2FA Google Activ' : 'Fără 2FA'}
-              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ fontSize: '0.875rem', fontWeight: 700 }}>{user.displayName}</span>
+                {user.hierarchyName && (
+                  <span
+                    style={{
+                      fontSize: '0.675rem',
+                      fontWeight: 700,
+                      padding: '1px 6px',
+                      borderRadius: '4px',
+                      background: 'rgba(59, 130, 246, 0.2)',
+                      color: user.hierarchyColor || '#93c5fd',
+                      border: '1px solid rgba(59, 130, 246, 0.4)'
+                    }}
+                  >
+                    Nv.{user.levelDepth}: {user.hierarchyName}
+                  </span>
+                )}
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.7rem' }}>
+                {user.jobTitle && <span style={{ color: '#cbd5e1' }}>{user.jobTitle}</span>}
+                <span style={{ color: user.twoFactorEnabled ? '#34d399' : '#94a3b8', display: 'flex', alignItems: 'center', gap: '3px' }}>
+                  {user.twoFactorEnabled && <CheckCircle2 size={11} />}
+                  {user.twoFactorEnabled ? '2FA Google' : 'Fără 2FA'}
+                </span>
+              </div>
             </div>
-            <button className="btn btn-secondary btn-sm" onClick={onLogout} title="Deconectare">
+            <button className="btn btn-secondary btn-sm" onClick={onLogout} title="Deconectare cont">
               <LogOut size={15} />
             </button>
           </div>

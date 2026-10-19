@@ -49,10 +49,13 @@ db.serialize(async () => {
       password_hash TEXT NOT NULL,
       email TEXT,
       role TEXT DEFAULT 'user',
+      job_title TEXT,
+      hierarchy_id INTEGER,
       two_factor_enabled INTEGER DEFAULT 0,
       two_factor_secret TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      last_login DATETIME
+      last_login DATETIME,
+      FOREIGN KEY(hierarchy_id) REFERENCES hierarchy_nodes(id) ON DELETE SET NULL
     )
   `);
 
@@ -226,3 +229,7 @@ db.serialize(async () => {
 });
 
 module.exports = { db, dbAsync };
+
+  // Migrari sigure pentru coloane utilizator
+  db.run("ALTER TABLE users ADD COLUMN hierarchy_id INTEGER", () => {});
+  db.run("ALTER TABLE users ADD COLUMN job_title TEXT", () => {});

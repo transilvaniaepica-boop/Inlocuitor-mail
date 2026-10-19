@@ -204,7 +204,13 @@ app.get('/api/auth/me', async (req, res) => {
     if (!req.session.userId) {
       return res.json({ user: null });
     }
-    const user = await dbAsync.get('SELECT id, username, display_name, email, role, two_factor_enabled FROM users WHERE id = ?', [req.session.userId]);
+    const user = await dbAsync.get(`
+      SELECT u.id, u.username, u.display_name, u.email, u.role, u.job_title, u.hierarchy_id, u.two_factor_enabled,
+             h.name as hierarchy_name, h.color as hierarchy_color, h.level_depth
+      FROM users u
+      LEFT JOIN hierarchy_nodes h ON u.hierarchy_id = h.id
+      WHERE u.id = ?
+    `, [req.session.userId]);
     if (!user) {
       req.session.userId = null;
       return res.json({ user: null });
@@ -216,6 +222,11 @@ app.get('/api/auth/me', async (req, res) => {
         displayName: user.display_name,
         email: user.email,
         role: user.role,
+        jobTitle: user.job_title,
+        hierarchyId: user.hierarchy_id,
+        hierarchyName: user.hierarchy_name,
+        hierarchyColor: user.hierarchy_color,
+        levelDepth: user.level_depth,
         twoFactorEnabled: Boolean(user.two_factor_enabled)
       }
     });
@@ -321,9 +332,14 @@ function buildHierarchyTree(nodes, parentId = null) {
     }));
 }
 
-// Returneaza structurile ierarhice (format arbore si format plat cu numarul de email-uri)
+// Returneaza structurile ierarhice (format arbore si format plat cu numarul de email-uri si utilizatori asignati)
 app.get('/api/hierarchy', async (req, res) => {
   try {
+    const allUsers = await dbAsync.all(`
+      SELECT id, username, display_name, job_title, role, hierarchy_id 
+      FROM users WHERE hierarchy_id IS NOT NULL
+    `);
+
     const nodes = await dbAsync.all(`
       SELECT h.*, 
         (SELECT COUNT(*) FROM emails WHERE emails.hierarchy_id = h.id) as email_count
@@ -346,7 +362,8 @@ app.get('/api/hierarchy', async (req, res) => {
 
     const enhancedNodes = nodes.map(n => ({
       ...n,
-      total_emails: getSubtreeEmailCount(n.id)
+      total_emails: getSubtreeEmailCount(n.id),
+      users: allUsers.filter(u => u.hierarchy_id === n.id)
     }));
 
     const tree = buildHierarchyTree(enhancedNodes, null);
@@ -479,13 +496,16 @@ app.delete('/api/hierarchy/:id', requireAdmin, async (req, res) => {
 // 4. GESTIUNE UTILIZATORI & CONFIGURARE GOOGLE 2FA
 // ========================================================
 
-// Lista utilizatori (doar pentru admin)
+// Lista utilizatori cu pozitie ierarhica inclusa (doar pentru admin)
 app.get('/api/admin/users', requireAdmin, async (req, res) => {
   try {
     const users = await dbAsync.all(`
-      SELECT id, username, display_name, email, role, two_factor_enabled, created_at, last_login 
-      FROM users 
-      ORDER BY id ASC
+      SELECT u.id, u.username, u.display_name, u.email, u.role, u.job_title, u.hierarchy_id,
+             u.two_factor_enabled, u.created_at, u.last_login,
+             h.name as hierarchy_name, h.color as hierarchy_color, h.level_depth
+      FROM users u
+      LEFT JOIN hierarchy_nodes h ON u.hierarchy_id = h.id
+      ORDER BY u.id ASC
     `);
     res.json({ users });
   } catch (err) {
@@ -493,10 +513,10 @@ app.get('/api/admin/users', requireAdmin, async (req, res) => {
   }
 });
 
-// Adaugare utilizator
+// Adaugare utilizator cu pozitie ierarhica si functie
 app.post('/api/admin/users', requireAdmin, async (req, res) => {
   try {
-    const { username, display_name, password, email, role } = req.body;
+    const { username, display_name, password, email, role, job_title, hierarchy_id } = req.body;
     if (!username || !password || !display_name) {
       return res.status(400).json({ error: 'Numele de utilizator, numele afișat și parola sunt obligatorii.' });
     }
@@ -506,11 +526,18 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Acest nume de utilizator există deja.' });
     }
 
+    const hId = (hierarchy_id === '' || hierarchy_id === null || hierarchy_id === undefined) ? null : parseInt(hierarchy_id);
     const passHash = bcrypt.hashSync(password, 10);
     const result = await dbAsync.run(`
-      INSERT INTO users (username, display_name, password_hash, email, role, two_factor_enabled)
-      VALUES (?, ?, ?, ?, ?, 0)
-    `, [username.trim(), display_name.trim(), passHash, email ? email.trim() : null, role || 'user']);
+      INSERT INTO users (username, display_name, password_hash, email, role, job_title, hierarchy_id, two_factor_enabled)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+    `, [username.trim(), display_name.trim(), passHash, email ? email.trim() : null, role || 'user', job_title ? job_title.trim() : null, hId]);
+
+    await dbAsync.run('INSERT INTO system_logs (level, message, source) VALUES (?, ?, ?)', [
+      'INFO',
+      `Utilizator nou creat: ${username.trim()} (${display_name.trim()})`,
+      'USER_MANAGEMENT'
+    ]);
 
     res.json({ success: true, id: result.id });
   } catch (err) {
@@ -518,14 +545,16 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
   }
 });
 
-// Editare utilizator
+// Editare utilizator (inclusiv pozitie ierarhica si functie)
 app.put('/api/admin/users/:id', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const { display_name, email, role, password } = req.body;
+    const { display_name, email, role, job_title, hierarchy_id, password } = req.body;
 
-    let query = 'UPDATE users SET display_name = ?, email = ?, role = ?';
-    let params = [display_name, email ? email.trim() : null, role || 'user'];
+    const hId = (hierarchy_id === '' || hierarchy_id === null || hierarchy_id === undefined) ? null : parseInt(hierarchy_id);
+
+    let query = 'UPDATE users SET display_name = ?, email = ?, role = ?, job_title = ?, hierarchy_id = ?';
+    let params = [display_name, email ? email.trim() : null, role || 'user', job_title ? job_title.trim() : null, hId];
 
     if (password && password.trim() !== '') {
       query += ', password_hash = ?';
@@ -536,6 +565,13 @@ app.put('/api/admin/users/:id', requireAdmin, async (req, res) => {
     params.push(id);
 
     await dbAsync.run(query, params);
+
+    await dbAsync.run('INSERT INTO system_logs (level, message, source) VALUES (?, ?, ?)', [
+      'INFO',
+      `Actualizate datele utilizatorului ID ${id} (${display_name})`,
+      'USER_MANAGEMENT'
+    ]);
+
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

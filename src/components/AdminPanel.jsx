@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { 
   Layers, Users, Server, FileText, Plus, Edit, Trash2, 
   Check, X, QrCode, Smartphone, RefreshCw, Key, ShieldCheck, 
-  ChevronRight, CornerDownRight, CheckCircle2, AlertTriangle
+  ChevronRight, CornerDownRight, CheckCircle2, AlertTriangle,
+  UserPlus, Briefcase, Tag, UserCheck
 } from 'lucide-react';
 
 export default function AdminPanel({
@@ -22,8 +23,21 @@ export default function AdminPanel({
   const [nodeDesc, setNodeDesc] = useState('');
   const [nodeColor, setNodeColor] = useState('#3b82f6');
 
-  // Stari pentru Utilizatori & 2FA Google
+  // Stari pentru Utilizatori & 2FA Google & Pozitii Ierarhice
   const [users, setUsers] = useState([]);
+  const [userModalOpen, setUserModalOpen] = useState(false);
+  const [editingUser, setEditingUser] = useState(null);
+  
+  // Campuri formular utilizator
+  const [userFormUsername, setUserFormUsername] = useState('');
+  const [userFormDisplayName, setUserFormDisplayName] = useState('');
+  const [userFormEmail, setUserFormEmail] = useState('');
+  const [userFormPassword, setUserFormPassword] = useState('');
+  const [userFormRole, setUserFormRole] = useState('user');
+  const [userFormJobTitle, setUserFormJobTitle] = useState('');
+  const [userFormHierarchyId, setUserFormHierarchyId] = useState('');
+
+  // Stari pentru 2FA
   const [twoFaModalOpen, setTwoFaModalOpen] = useState(false);
   const [selectedUser2FA, setSelectedUser2FA] = useState(null);
   const [twoFaData, setTwoFaData] = useState(null);
@@ -47,7 +61,6 @@ export default function AdminPanel({
   const [currentAdminPass, setCurrentAdminPass] = useState('');
   const [newAdminPass, setNewAdminPass] = useState('');
 
-  // Incarcare initiala date admin
   useEffect(() => {
     fetchUsers();
     fetchImapSettings();
@@ -70,6 +83,94 @@ export default function AdminPanel({
       if (res.ok) setImapSettings(prev => ({ ...prev, ...data }));
     } catch (err) {
       console.error(err);
+    }
+  };
+
+  // --- Handlers Utilizatori & Pozitii Ierarhice ---
+  const handleOpenAddUser = (preselectedHierarchyId = '') => {
+    setEditingUser(null);
+    setUserFormUsername('');
+    setUserFormDisplayName('');
+    setUserFormEmail('');
+    setUserFormPassword('');
+    setUserFormRole('user');
+    setUserFormJobTitle('');
+    setUserFormHierarchyId(preselectedHierarchyId ? String(preselectedHierarchyId) : '');
+    setUserModalOpen(true);
+  };
+
+  const handleOpenEditUser = (user) => {
+    setEditingUser(user);
+    setUserFormUsername(user.username);
+    setUserFormDisplayName(user.display_name);
+    setUserFormEmail(user.email || '');
+    setUserFormPassword('');
+    setUserFormRole(user.role || 'user');
+    setUserFormJobTitle(user.job_title || '');
+    setUserFormHierarchyId(user.hierarchy_id ? String(user.hierarchy_id) : '');
+    setUserModalOpen(true);
+  };
+
+  const handleSaveUser = async (e) => {
+    e.preventDefault();
+    try {
+      if (editingUser) {
+        // Editare
+        const res = await fetch(`/api/admin/users/${editingUser.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            display_name: userFormDisplayName,
+            email: userFormEmail,
+            role: userFormRole,
+            job_title: userFormJobTitle,
+            hierarchy_id: userFormHierarchyId,
+            password: userFormPassword
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Eroare la actualizarea utilizatorului');
+        onShowToast('Utilizatorul și poziția ierarhică au fost actualizate!', 'success');
+      } else {
+        // Adaugare utilizator nou
+        const res = await fetch('/api/admin/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: userFormUsername,
+            display_name: userFormDisplayName,
+            email: userFormEmail,
+            password: userFormPassword,
+            role: userFormRole,
+            job_title: userFormJobTitle,
+            hierarchy_id: userFormHierarchyId
+          })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Eroare la adăugarea utilizatorului');
+        onShowToast(`Utilizatorul "${userFormDisplayName}" a fost adăugat cu succes pe poziția selectată!`, 'success');
+      }
+
+      setUserModalOpen(false);
+      fetchUsers();
+      onReloadHierarchy();
+    } catch (err) {
+      onShowToast(err.message, 'error');
+    }
+  };
+
+  const handleDeleteUser = async (user) => {
+    if (!window.confirm(`Sunteți sigur că doriți să ștergeți utilizatorul "${user.display_name}"?`)) {
+      return;
+    }
+    try {
+      const res = await fetch(`/api/admin/users/${user.id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Eroare la ștergerea utilizatorului');
+      onShowToast('Utilizatorul a fost șters.', 'success');
+      fetchUsers();
+      onReloadHierarchy();
+    } catch (err) {
+      onShowToast(err.message, 'error');
     }
   };
 
@@ -108,7 +209,6 @@ export default function AdminPanel({
     e.preventDefault();
     try {
       if (editingNode) {
-        // Editare
         const res = await fetch(`/api/hierarchy/${editingNode.id}`, {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
@@ -122,7 +222,6 @@ export default function AdminPanel({
         if (!res.ok) throw new Error('Eroare la actualizarea denumirii');
         onShowToast('Denumire nivel actualizată cu succes!', 'success');
       } else {
-        // Adaugare la radacina sau subnivel
         const res = await fetch('/api/hierarchy', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -149,18 +248,18 @@ export default function AdminPanel({
     if (!window.confirm(`Sunteți sigur că doriți să ștergeți "${node.name}" și TOATE subnivelele sale?`)) {
       return;
     }
-
     try {
       const res = await fetch(`/api/hierarchy/${node.id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Eroare la ștergerea nivelului');
       onShowToast(`Nivelul și subnivelele au fost șterse.`, 'success');
       onReloadHierarchy();
+      fetchUsers();
     } catch (err) {
       onShowToast(err.message, 'error');
     }
   };
 
-  // --- Handlers Utilizatori & 2FA Google ---
+  // --- Handlers 2FA Google ---
   const handleSetup2FA = async (user) => {
     setSelectedUser2FA(user);
     setVerifyTestCode('');
@@ -201,9 +300,9 @@ export default function AdminPanel({
         body: JSON.stringify({ token: verifyTestCode })
       });
       if (res.ok) {
-        setVerifyStatus({ ok: true, msg: 'Cod valid! Telefonul este sincronizat corect.' });
+        setVerifyStatus({ ok: true, msg: 'Cod valid! Sincronizat corect.' });
       } else {
-        setVerifyStatus({ ok: false, msg: 'Cod invalid sau expirat. Verificați ceasul telefonului.' });
+        setVerifyStatus({ ok: false, msg: 'Cod invalid sau expirat.' });
       }
     } catch (err) {
       setVerifyStatus({ ok: false, msg: err.message });
@@ -271,7 +370,7 @@ export default function AdminPanel({
     if (!nodes || nodes.length === 0) return null;
 
     return nodes.map(node => (
-      <div key={node.id} style={{ marginBottom: '8px' }}>
+      <div key={node.id} style={{ marginBottom: '10px' }}>
         <div 
           className="hierarchy-node-card"
           style={{ marginLeft: `${(depth - 1) * 28}px`, borderLeft: `4px solid ${node.color || '#3b82f6'}` }}
@@ -290,26 +389,64 @@ export default function AdminPanel({
             </span>
 
             <div>
-              <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#f8fafc' }}>
+              <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#f8fafc', display: 'flex', alignItems: 'center', gap: '8px' }}>
                 {node.name}
                 {node.code && (
-                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginLeft: '8px', fontWeight: 'normal' }}>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 'normal' }}>
                     [{node.code}]
                   </span>
                 )}
               </div>
+              
               {node.description && (
                 <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                   {node.description}
+                </div>
+              )}
+
+              {/* Utilizatori asignati pe acest nivel */}
+              {node.users && node.users.length > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '6px', flexWrap: 'wrap' }}>
+                  <Users size={12} style={{ color: '#a5b4fc' }} />
+                  <span style={{ fontSize: '0.725rem', color: '#cbd5e1' }}>Membri:</span>
+                  {node.users.map(u => (
+                    <span 
+                      key={u.id}
+                      style={{
+                        background: 'rgba(99, 102, 241, 0.15)',
+                        border: '1px solid rgba(99, 102, 241, 0.3)',
+                        color: '#c7d2fe',
+                        padding: '1px 6px',
+                        borderRadius: '4px',
+                        fontSize: '0.725rem',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px'
+                      }}
+                    >
+                      <strong>{u.display_name}</strong>
+                      {u.job_title && <span style={{ opacity: 0.8 }}>({u.job_title})</span>}
+                    </span>
+                  ))}
                 </div>
               )}
             </div>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginRight: '8px' }}>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginRight: '6px' }}>
               {node.total_emails} email-uri
             </span>
+
+            <button
+              className="btn btn-secondary btn-sm"
+              onClick={() => handleOpenAddUser(node.id)}
+              title="Adaugă un utilizator direct pe această poziție ierarhică"
+              style={{ background: 'rgba(59, 130, 246, 0.15)', color: '#93c5fd' }}
+            >
+              <UserPlus size={13} />
+              + User pe acest nivel
+            </button>
 
             <button
               className="btn btn-secondary btn-sm"
@@ -368,7 +505,7 @@ export default function AdminPanel({
             onClick={() => setActiveTab('hierarchy')}
           >
             <Layers size={16} />
-            Arbore Ierarhic (Nivele Nelimitate)
+            Arbore Ierarhic & Utilizatori
           </button>
 
           <button
@@ -376,7 +513,7 @@ export default function AdminPanel({
             onClick={() => setActiveTab('users')}
           >
             <Users size={16} />
-            Utilizatori & 2FA Google
+            Gestiune Utilizatori & 2FA
           </button>
 
           <button
@@ -404,16 +541,22 @@ export default function AdminPanel({
           <div className="hierarchy-manager">
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '24px' }}>
               <div>
-                <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Configurare Structuri Ierarhice</h3>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Configurare Structuri Ierarhice & Membri</h3>
                 <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                  Puteți adăuga un număr <strong>nelimitat de nivele</strong> (Rădăcină &rarr; Subnivel &rarr; Sub-subnivel etc.). Denumirea fiecărui nivel poate fi editată oricând.
+                  Puteți adăuga un număr <strong>nelimitat de nivele</strong> (Rădăcină &rarr; Subnivel &rarr; Sub-subnivel etc.) și puteți plasa utilizatori pe oricare dintre aceste poziții.
                 </p>
               </div>
 
-              <button className="btn btn-primary" onClick={handleOpenAddRoot}>
-                <Plus size={16} />
-                + Adaugă Nivel Rădăcină (Nivel 1)
-              </button>
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button className="btn btn-secondary" onClick={() => handleOpenAddUser('')}>
+                  <UserPlus size={16} />
+                  + Adaugă Utilizator
+                </button>
+                <button className="btn btn-primary" onClick={handleOpenAddRoot}>
+                  <Plus size={16} />
+                  + Adaugă Nivel Rădăcină (Nivel 1)
+                </button>
+              </div>
             </div>
 
             {hierarchyTree && hierarchyTree.length > 0 ? (
@@ -433,45 +576,82 @@ export default function AdminPanel({
           </div>
         )}
 
-        {/* TAB 2: UTILIZATORI & GOOGLE 2FA */}
+        {/* TAB 2: UTILIZATORI & POZITII IERARHICE & 2FA */}
         {activeTab === 'users' && (
-          <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
+          <div style={{ maxWidth: '1100px', margin: '0 auto' }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' }}>
               <div>
-                <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Gestiune Utilizatori & Google Authenticator</h3>
+                <h3 style={{ fontSize: '1.2rem', fontWeight: 700 }}>Gestiune Utilizatori pe Poziții Ierarhice</h3>
                 <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-                  Configurați autentificarea cu 2 factori (2FA) prin Google Authenticator pentru fiecare cont de utilizator.
+                  Creați conturi, asociați-le la nivele ierarhice specifice și configurați autentificarea 2FA Google.
                 </p>
               </div>
+
+              <button className="btn btn-primary" onClick={() => handleOpenAddUser('')}>
+                <UserPlus size={16} />
+                + Adaugă Utilizator Nou
+              </button>
             </div>
 
             <div style={{ background: 'var(--bg-secondary)', borderRadius: '10px', overflow: 'hidden', border: '1px solid var(--border-color)' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.9rem' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-color)', background: 'rgba(15, 23, 42, 0.4)', color: 'var(--text-muted)' }}>
-                    <th style={{ padding: '14px 20px' }}>Utilizator</th>
+                    <th style={{ padding: '14px 20px' }}>Utilizator & Funcție</th>
+                    <th style={{ padding: '14px 20px' }}>Poziție în Ierarhie</th>
                     <th style={{ padding: '14px 20px' }}>Rol</th>
-                    <th style={{ padding: '14px 20px' }}>Status Google 2FA</th>
-                    <th style={{ padding: '14px 20px', textAlign: 'right' }}>Acțiuni 2FA</th>
+                    <th style={{ padding: '14px 20px' }}>Google 2FA</th>
+                    <th style={{ padding: '14px 20px', textAlign: 'right' }}>Acțiuni</th>
                   </tr>
                 </thead>
                 <tbody>
                   {users.map(u => (
                     <tr key={u.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
                       <td style={{ padding: '14px 20px' }}>
-                        <div style={{ fontWeight: 600 }}>{u.display_name}</div>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>@{u.username} &bull; {u.email || 'fără email'}</div>
+                        <div style={{ fontWeight: 600, color: '#f8fafc' }}>{u.display_name}</div>
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                          @{u.username} &bull; {u.email || 'fără email'}
+                        </div>
+                        {u.job_title && (
+                          <div style={{ fontSize: '0.75rem', color: '#93c5fd', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            <Briefcase size={12} />
+                            {u.job_title}
+                          </div>
+                        )}
                       </td>
+
+                      <td style={{ padding: '14px 20px' }}>
+                        {u.hierarchy_name ? (
+                          <span
+                            className="hierarchy-tag"
+                            style={{
+                              backgroundColor: `${u.hierarchy_color || '#3b82f6'}20`,
+                              color: u.hierarchy_color || '#60a5fa',
+                              border: `1px solid ${u.hierarchy_color || '#3b82f6'}40`,
+                              fontSize: '0.75rem'
+                            }}
+                          >
+                            <Tag size={11} />
+                            [Nivel {u.level_depth}] {u.hierarchy_name}
+                          </span>
+                        ) : (
+                          <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', fontStyle: 'italic' }}>
+                            -- Neasignat în ierarhie --
+                          </span>
+                        )}
+                      </td>
+
                       <td style={{ padding: '14px 20px' }}>
                         <span style={{ textTransform: 'capitalize', background: 'rgba(148, 163, 184, 0.1)', padding: '2px 8px', borderRadius: '4px', fontSize: '0.75rem' }}>
                           {u.role}
                         </span>
                       </td>
+
                       <td style={{ padding: '14px 20px' }}>
                         {u.two_factor_enabled ? (
                           <span style={{ color: '#34d399', display: 'inline-flex', alignItems: 'center', gap: '6px', fontWeight: 600, fontSize: '0.8rem' }}>
                             <CheckCircle2 size={15} />
-                            Activat (Google Authenticator)
+                            Activat (Google 2FA)
                           </span>
                         ) : (
                           <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>
@@ -479,22 +659,40 @@ export default function AdminPanel({
                           </span>
                         )}
                       </td>
+
                       <td style={{ padding: '14px 20px', textAlign: 'right' }}>
-                        <div style={{ display: 'inline-flex', gap: '8px' }}>
+                        <div style={{ display: 'inline-flex', gap: '6px' }}>
+                          <button
+                            className="btn btn-secondary btn-sm"
+                            onClick={() => handleOpenEditUser(u)}
+                            title="Editează datele sau schimbă poziția ierarhică"
+                          >
+                            <Edit size={13} />
+                            Editează
+                          </button>
+
                           <button
                             className="btn btn-secondary btn-sm"
                             onClick={() => handleSetup2FA(u)}
-                            title="Generează codul QR pentru Google Authenticator"
+                            title="Configurează Google Authenticator"
                           >
-                            <QrCode size={14} />
-                            {u.two_factor_enabled ? 'Reconfigurează QR' : 'Configurează QR'}
+                            <QrCode size={13} />
+                            2FA QR
                           </button>
 
                           <button
                             className={`btn btn-sm ${u.two_factor_enabled ? 'btn-danger' : 'btn-primary'}`}
                             onClick={() => handleToggle2FA(u.id, !u.two_factor_enabled)}
                           >
-                            {u.two_factor_enabled ? 'Dezactivează' : 'Activează'}
+                            {u.two_factor_enabled ? 'Dezactivare' : 'Activare'}
+                          </button>
+
+                          <button
+                            className="btn btn-danger btn-sm"
+                            onClick={() => handleDeleteUser(u)}
+                            title="Șterge utilizatorul"
+                          >
+                            <Trash2 size={13} />
                           </button>
                         </div>
                       </td>
@@ -643,6 +841,133 @@ export default function AdminPanel({
         )}
       </div>
 
+      {/* MODAL ADAUGARE / EDITARE UTILIZATOR & POZITIE IERARHICA */}
+      {userModalOpen && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '560px' }}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <UserPlus size={20} style={{ color: '#818cf8' }} />
+                <h3>{editingUser ? 'Editează Utilizator & Poziție Ierarhică' : 'Adaugă Utilizator Nou în Ierarhie'}</h3>
+              </div>
+              <button onClick={() => setUserModalOpen(false)} style={{ background: 'transparent', color: 'var(--text-muted)' }}>
+                <X size={20} />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveUser}>
+              <div className="modal-body">
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                  <div className="form-group">
+                    <label className="form-label">Nume Afișat (Complet)</label>
+                    <input
+                      type="text"
+                      required
+                      autoFocus
+                      value={userFormDisplayName}
+                      onChange={(e) => setUserFormDisplayName(e.target.value)}
+                      placeholder="ex: Ion Popescu"
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Nume Utilizator (Username)</label>
+                    <input
+                      type="text"
+                      required
+                      disabled={Boolean(editingUser)}
+                      value={userFormUsername}
+                      onChange={(e) => setUserFormUsername(e.target.value)}
+                      placeholder="ex: ipopescu"
+                    />
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 0.8fr', gap: '14px' }}>
+                  <div className="form-group">
+                    <label className="form-label">Funcție / Titlu Poziție</label>
+                    <input
+                      type="text"
+                      value={userFormJobTitle}
+                      onChange={(e) => setUserFormJobTitle(e.target.value)}
+                      placeholder="ex: Director Vânzări, Specialist IT"
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Rol în Aplicație</label>
+                    <select
+                      value={userFormRole}
+                      onChange={(e) => setUserFormRole(e.target.value)}
+                    >
+                      <option value="user">Utilizator Standard</option>
+                      <option value="operator">Operator</option>
+                      <option value="manager">Manager</option>
+                      <option value="admin">Administrator</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* SELECTOR POZITIE IERARHICA */}
+                <div className="form-group" style={{ background: 'rgba(59, 130, 246, 0.08)', padding: '12px', borderRadius: '8px', border: '1px solid rgba(59, 130, 246, 0.2)' }}>
+                  <label className="form-label" style={{ color: '#93c5fd', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <Layers size={14} />
+                    Poziție în Structura Ierarhică (Pe oricâte nivele):
+                  </label>
+                  <select
+                    value={userFormHierarchyId}
+                    onChange={(e) => setUserFormHierarchyId(e.target.value)}
+                    style={{ width: '100%', fontSize: '0.875rem', fontWeight: 500 }}
+                  >
+                    <option value="">-- Fără poziție ierarhică (Neasignat) --</option>
+                    {flatHierarchy.map(node => (
+                      <option key={node.id} value={node.id}>
+                        {'  '.repeat(node.level_depth - 1)}[Nivel {node.level_depth}] {node.name} {node.code ? `(${node.code})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <span style={{ fontSize: '0.725rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                    Selectați nivelul din structură căruia îi aparține acest utilizator.
+                  </span>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                  <div className="form-group">
+                    <label className="form-label">Adresă E-mail</label>
+                    <input
+                      type="email"
+                      value={userFormEmail}
+                      onChange={(e) => setUserFormEmail(e.target.value)}
+                      placeholder="nume@companie.ro"
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">{editingUser ? 'Parolă nouă (opțional)' : 'Parolă de conectare'}</label>
+                    <input
+                      type="password"
+                      required={!editingUser}
+                      value={userFormPassword}
+                      onChange={(e) => setUserFormPassword(e.target.value)}
+                      placeholder={editingUser ? 'Lăsați gol dacă nu schimbați' : 'Introduceți parola...'}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="modal-footer">
+                <button type="button" className="btn btn-secondary" onClick={() => setUserModalOpen(false)}>
+                  Anulează
+                </button>
+                <button type="submit" className="btn btn-primary">
+                  {editingUser ? 'Salvează Modificările' : 'Creează Utilizatorul'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* MODAL ADAUGARE / EDITARE NIVEL IERARHIC */}
       {nodeModalOpen && (
         <div className="modal-overlay">
@@ -730,7 +1055,7 @@ export default function AdminPanel({
 
             <div className="modal-body" style={{ textAlign: 'center' }}>
               <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '14px' }}>
-                Scanați codul QR de mai jos cu aplicația <strong>Google Authenticator</strong> de pe telefon pentru utilizatorul <strong>{selectedUser2FA?.username}</strong>:
+                Scanați codul QR cu aplicația <strong>Google Authenticator</strong> de pe telefon pentru utilizatorul <strong>{selectedUser2FA?.username}</strong>:
               </p>
 
               {/* Imagine Cod QR generat */}
@@ -748,7 +1073,7 @@ export default function AdminPanel({
               {/* Testare Cod 6 Cifre */}
               <div style={{ background: 'rgba(15, 23, 42, 0.4)', padding: '14px', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
                 <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '6px' }}>
-                  Testați codul generat pe telefon (6 cifre):
+                  Testare cod 6 cifre (cu telefonul sau direct din browser):
                 </label>
                 <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
                   <input
