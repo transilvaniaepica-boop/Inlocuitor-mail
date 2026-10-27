@@ -799,25 +799,31 @@ app.post('/api/user/mail-settings', async (req, res) => {
 app.post('/api/user/imap/test', async (req, res) => {
   try {
     if (!req.session.userId) return res.status(401).json({ error: 'Neautentificat' });
-    const { imap_host, imap_port, imap_tls, imap_user, imap_pass } = req.body;
 
-    // Daca nu se trimite parola, o luam din baza de date
-    let password = imap_pass;
-    if (!password || !password.trim()) {
+    // Acceptam ambele conventii: {host,port,tls,username,password} sau {imap_host,imap_port,...}
+    const host     = req.body.host     || req.body.imap_host;
+    const port     = req.body.port     || req.body.imap_port;
+    const tls      = req.body.tls      !== undefined ? req.body.tls      : req.body.imap_tls;
+    const username = req.body.username || req.body.imap_user;
+    const passRaw  = req.body.password || req.body.imap_pass;
+
+    // Daca parola lipseste din formular, o luam din baza de date
+    let password = passRaw;
+    if (!password || !String(password).trim()) {
       const user = await dbAsync.get('SELECT imap_pass FROM users WHERE id = ?', [req.session.userId]);
-      if (user) password = user.imap_pass;
+      if (user && user.imap_pass) password = user.imap_pass;
     }
 
     const settings = {
-      host: imap_host,
-      port: parseInt(imap_port) || 993,
-      tls: imap_tls !== undefined ? (imap_tls ? true : false) : true,
-      username: imap_user,
+      host: host,
+      port: parseInt(port) || 993,
+      tls: tls !== undefined ? (tls ? true : false) : true,
+      username: username,
       password: password
     };
 
     if (!settings.host || !settings.username || !settings.password) {
-      return res.status(400).json({ success: false, error: 'Completati toate campurile obligatorii (host, utilizator, parola).' });
+      return res.status(400).json({ success: false, error: 'Completati toate campurile: host, utilizator si parola.' });
     }
 
     const result = await testImapConnection(settings);
