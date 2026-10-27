@@ -1,3 +1,12 @@
+
+// Global process error handlers to prevent unhandled socket timeouts from crashing the server
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Process] Unhandled Rejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[Process] Uncaught Exception:', err);
+});
+
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
@@ -7,6 +16,9 @@ const bcrypt = require('bcryptjs');
 const { db, dbAsync } = require('./db');
 const { generateSecret, getOtpAuthUrl, generateQRCodeDataUrl, verifyTOTP } = require('./totp');
 const { testImapConnection, syncImap } = require('./imap');
+const crypto = require("crypto");
+const multer = require("multer");
+const { testSmtpConnection, sendEmailWithLinks } = require("./smtp");
 
 const app = express();
 const PORT = process.env.PORT || 3005;
@@ -17,6 +29,28 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '15mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// Configurare director uploads pentru pastrarea documentelor
+const uploadsDir = path.join(process.env.DATA_DIR || path.join(require("os").homedir(), ".inlocuitor_mail_simplificat"), "uploads");
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, uploadsDir);
+  },
+  filename: function (req, file, cb) {
+    const ext = path.extname(file.originalname);
+    const uniqueName = crypto.randomUUID() + ext;
+    cb(null, uniqueName);
+  }
+});
+const upload = multer({ 
+  storage: storage,
+  limits: { fileSize: 50 * 1024 * 1024 } // pana la 50MB per fisier
+});
+
 
 app.use(session({
   secret: process.env.SESSION_SECRET || 'inlocuitor-mail-simplificat-super-secure-key-2026',
@@ -207,7 +241,7 @@ app.get('/api/auth/me', async (req, res) => {
       return res.json({ user: null });
     }
     const user = await dbAsync.get(`
-      SELECT u.id, u.username, u.display_name, u.email, u.role, u.job_title, u.hierarchy_id, u.imap_user, (CASE WHEN u.imap_pass IS NOT NULL AND u.imap_pass != '' THEN 1 ELSE 0 END) as has_imap_pass, u.two_factor_enabled,
+      SELECT u.id, u.username, u.display_name, u.email, u.role, u.job_title, u.hierarchy_id, u.imap_host, u.imap_port, u.imap_tls, u.imap_user, (CASE WHEN u.imap_pass IS NOT NULL AND u.imap_pass != '' THEN 1 ELSE 0 END) as has_imap_pass, u.smtp_host, u.smtp_port, u.smtp_secure, u.smtp_user, (CASE WHEN u.smtp_pass IS NOT NULL AND u.smtp_pass != '' THEN 1 ELSE 0 END) as has_smtp_pass, u.two_factor_enabled,
              h.name as hierarchy_name, h.color as hierarchy_color, h.level_depth
       FROM users u
       LEFT JOIN hierarchy_nodes h ON u.hierarchy_id = h.id
@@ -229,7 +263,17 @@ app.get('/api/auth/me', async (req, res) => {
         hierarchyName: user.hierarchy_name,
         hierarchyColor: user.hierarchy_color,
         levelDepth: user.level_depth,
-        twoFactorEnabled: Boolean(user.two_factor_enabled)
+        twoFactorEnabled: Boolean(user.two_factor_enabled),
+        imapHost: user.imap_host,
+        imapPort: user.imap_port,
+        imapTls: user.imap_tls,
+        imapUser: user.imap_user,
+        hasImapPass: Boolean(user.has_imap_pass),
+        smtpHost: user.smtp_host,
+        smtpPort: user.smtp_port,
+        smtpSecure: user.smtp_secure,
+        smtpUser: user.smtp_user,
+        hasSmtpPass: Boolean(user.has_smtp_pass)
       }
     });
   } catch (err) {
@@ -518,7 +562,7 @@ app.get('/api/admin/users', requireAdmin, async (req, res) => {
 // Adaugare utilizator cu pozitie ierarhica si functie
 app.post('/api/admin/users', requireAdmin, async (req, res) => {
   try {
-    const { username, display_name, password, email, role, job_title, hierarchy_id, imap_user, imap_pass } = req.body;
+    const { username, display_name, password, email, role, job_title, hierarchy_id, imap_host, imap_port, imap_tls, imap_user, imap_pass, smtp_host, smtp_port, smtp_secure, smtp_user, smtp_pass } = req.body;
     if (!username || !password || !display_name) {
       return res.status(400).json({ error: 'Numele de utilizator, numele afișat și parola sunt obligatorii.' });
     }
@@ -531,9 +575,8 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
     const hId = (hierarchy_id === '' || hierarchy_id === null || hierarchy_id === undefined) ? null : parseInt(hierarchy_id);
     const passHash = bcrypt.hashSync(password, 10);
     const result = await dbAsync.run(`
-      INSERT INTO users (username, display_name, password_hash, email, role, job_title, hierarchy_id, imap_user, imap_pass, two_factor_enabled)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-    `, [username.trim(), display_name.trim(), passHash, email ? email.trim() : null, role || 'user', job_title ? job_title.trim() : null, hId, imap_user ? imap_user.trim() : null, imap_pass ? imap_pass.trim() : null]);
+      INSERT INTO users (username, display_name, password_hash, email, role, job_title, hierarchy_id, imap_host, imap_port, imap_tls, imap_user, imap_pass, smtp_host, smtp_port, smtp_secure, smtp_user, smtp_pass, two_factor_enabled)\n      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+    `, [username.trim(), display_name.trim(), passHash, email ? email.trim() : null, role || 'user', job_title ? job_title.trim() : null, hId, imap_host || null, imap_port ? parseInt(imap_port) : 993, imap_tls !== undefined ? (imap_tls ? 1 : 0) : 1, imap_user ? imap_user.trim() : null, imap_pass ? imap_pass.trim() : null, smtp_host || null, smtp_port ? parseInt(smtp_port) : 465, smtp_secure !== undefined ? (smtp_secure ? 1 : 0) : 1, smtp_user ? smtp_user.trim() : null, smtp_pass ? smtp_pass.trim() : null]);
 
     await dbAsync.run('INSERT INTO system_logs (level, message, source) VALUES (?, ?, ?)', [
       'INFO',
@@ -551,12 +594,13 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
 app.put('/api/admin/users/:id', requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
-    const { display_name, email, role, job_title, hierarchy_id, password, imap_user, imap_pass } = req.body;
+    const { display_name, email, role, job_title, hierarchy_id, password, imap_host, imap_port, imap_tls, imap_user, imap_pass, smtp_host, smtp_port, smtp_secure, smtp_user, smtp_pass } = req.body;
 
     const hId = (hierarchy_id === '' || hierarchy_id === null || hierarchy_id === undefined) ? null : parseInt(hierarchy_id);
 
-    let query = 'UPDATE users SET display_name = ?, email = ?, role = ?, job_title = ?, hierarchy_id = ?, imap_user = ?';
-    let params = [display_name, email ? email.trim() : null, role || 'user', job_title ? job_title.trim() : null, hId, imap_user ? imap_user.trim() : null];
+    let query = 'UPDATE users SET display_name = ?, email = ?, role = ?, job_title = ?, hierarchy_id = ?, imap_host = ?, imap_port = ?, imap_tls = ?, imap_user = ?, smtp_host = ?, smtp_port = ?, smtp_secure = ?, smtp_user = ?';
+    let params = [display_name, email ? email.trim() : null, role || 'user', job_title ? job_title.trim() : null, hId, imap_host || null, imap_port ? parseInt(imap_port) : 993, imap_tls !== undefined ? (imap_tls ? 1 : 0) : 1, imap_user ? imap_user.trim() : null, smtp_host || null, smtp_port ? parseInt(smtp_port) : 465, smtp_secure !== undefined ? (smtp_secure ? 1 : 0) : 1, smtp_user ? smtp_user.trim() : null];
+    if (smtp_pass !== undefined && smtp_pass !== '') { query += ', smtp_pass = ?'; params.push(smtp_pass.trim()); }
     if (imap_pass !== undefined && imap_pass !== '') {
       query += ', imap_pass = ?';
       params.push(imap_pass.trim());
@@ -704,26 +748,251 @@ app.post('/api/imap/test', requireAdmin, async (req, res) => {
   }
 });
 
-// Declanșare sincronizare e-mailuri
+// Declanșare sincronizare e-mailuri (CONFIDENȚIAL: utilizatorul își sincronizează strict contul propriu)
 app.post('/api/imap/sync', async (req, res) => {
   try {
-    const settings = await dbAsync.get('SELECT * FROM imap_settings WHERE id = 1');
-    if (!settings || !settings.host) {
-      return res.status(400).json({ error: 'Serverul IMAP nu este configurat.' });
+    if (!req.session.userId) {
+      return res.status(401).json({ error: 'Trebuie să fiți autentificat cu un cont de utilizator pentru a vă sincroniza e-mailurile.' });
     }
 
-    let targetUser = null;
-    if (req.session.userId) {
-      const u = await dbAsync.get('SELECT * FROM users WHERE id = ?', [req.session.userId]);
-      if (u && u.imap_user && u.imap_pass) {
-        targetUser = u;
-      }
+    const targetUser = await dbAsync.get('SELECT * FROM users WHERE id = ?', [req.session.userId]);
+    if (!targetUser) {
+      return res.status(401).json({ error: 'Utilizatorul nu a fost găsit.' });
     }
 
-    const syncRes = await syncImap(settings, targetUser);
+    const globalSettings = await dbAsync.get('SELECT * FROM imap_settings WHERE id = 1') || {};
+
+    const userSettings = {
+      host: targetUser.imap_host || globalSettings.host,
+      port: targetUser.imap_port || globalSettings.port || 993,
+      tls: targetUser.imap_tls !== undefined ? (targetUser.imap_tls !== 0) : (globalSettings.tls !== 0),
+      username: targetUser.imap_user || targetUser.email,
+      password: targetUser.imap_pass
+    };
+
+    if (!userSettings.username || !userSettings.password) {
+      return res.status(400).json({ 
+        error: 'Căsuța dvs. IMAP nu are configurat utilizatorul sau parola. Apăsați pe butonul "Căsuța Mea" pentru a introduce datele contului dvs.' 
+      });
+    }
+
+    const syncRes = await syncImap(userSettings, targetUser);
     res.json(syncRes);
   } catch (err) {
     res.status(500).json({ error: 'Eroare la sincronizare: ' + err.message });
+  }
+});
+
+
+// ========================================================
+// 5.1 GESTIUNE SETĂRI SMTP GLOBALE & TEST CONEXIUNE
+// ========================================================
+
+app.get("/api/settings/mail", requireAdmin, async (req, res) => {
+  try {
+    const row = await dbAsync.get("SELECT id, host, port, tls, username, smtp_host, smtp_port, smtp_secure, smtp_user, auto_sync, sync_interval, last_sync FROM imap_settings WHERE id = 1");
+    res.json({ settings: row || {} });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/settings/mail", requireAdmin, async (req, res) => {
+  try {
+    const { host, port, tls, username, password, smtp_host, smtp_port, smtp_secure, smtp_user, smtp_pass, auto_sync, sync_interval } = req.body;
+    let query = "UPDATE imap_settings SET host = ?, port = ?, tls = ?, username = ?, smtp_host = ?, smtp_port = ?, smtp_secure = ?, smtp_user = ?, auto_sync = ?, sync_interval = ?";
+    let params = [host, parseInt(port) || 993, tls ? 1 : 0, username || "", smtp_host || "", parseInt(smtp_port) || 465, smtp_secure ? 1 : 0, smtp_user || "", auto_sync ? 1 : 0, parseInt(sync_interval) || 5];
+
+    if (password && password.trim() !== "") {
+      query += ", password = ?";
+      params.push(password.trim());
+    }
+    if (smtp_pass && smtp_pass.trim() !== "") {
+      query += ", smtp_pass = ?";
+      params.push(smtp_pass.trim());
+    }
+
+    query += " WHERE id = 1";
+    await dbAsync.run(query, params);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/smtp/test", requireAdmin, async (req, res) => {
+  try {
+    let settings = req.body;
+    if (!settings.smtp_pass) {
+      const cur = await dbAsync.get("SELECT smtp_pass, password FROM imap_settings WHERE id = 1");
+      if (cur) settings.smtp_pass = cur.smtp_pass || cur.password;
+    }
+    const testRes = await testSmtpConnection(settings);
+    res.json(testRes);
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+// ========================================================
+// 5.2 ÎNCĂRCARE DOCUMENTE (TRANSFORMARE ÎN LINK-URI SECURIZATE)
+// ========================================================
+
+app.post("/api/documents/upload", upload.array("documents", 10), async (req, res) => {
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ error: "Nu a fost încărcat niciun fișier." });
+    }
+
+    const userId = req.session.userId || null;
+    const uploadedDocs = [];
+
+    for (const file of req.files) {
+      const downloadToken = crypto.randomBytes(24).toString("hex");
+      const result = await dbAsync.run(`
+        INSERT INTO uploaded_documents 
+          (download_token, original_filename, stored_filename, file_size, mime_type, uploader_user_id)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `, [
+        downloadToken,
+        file.originalname,
+        file.filename,
+        file.size,
+        file.mimetype,
+        userId
+      ]);
+
+      uploadedDocs.push({
+        id: result.id,
+        download_token: downloadToken,
+        original_filename: file.originalname,
+        file_size: file.size,
+        mime_type: file.mimetype
+      });
+    }
+
+    res.json({ success: true, documents: uploadedDocs });
+  } catch (err) {
+    console.error("[Upload] Eroare la încărcare documente:", err);
+    res.status(500).json({ error: "Eroare la procesarea documentelor: " + err.message });
+  }
+});
+
+// Endpoint public de descărcare fișier securizat
+app.get("/api/documents/download/:token", async (req, res) => {
+  try {
+    const { token } = req.params;
+    const doc = await dbAsync.get("SELECT * FROM uploaded_documents WHERE download_token = ?", [token]);
+    if (!doc) {
+      return res.status(404).send("Documentul solicitat nu a fost găsit sau link-ul a expirat.");
+    }
+
+    const filePath = path.join(uploadsDir, doc.stored_filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).send("Fișierul nu mai există pe server.");
+    }
+
+    // Incrementare contor descărcări
+    await dbAsync.run("UPDATE uploaded_documents SET download_count = download_count + 1 WHERE id = ?", [doc.id]);
+
+    res.download(filePath, doc.original_filename);
+  } catch (err) {
+    res.status(500).send("Eroare la descărcare: " + err.message);
+  }
+});
+
+// ========================================================
+// 5.3 TRIMITERE E-MAIL (OUTGOING CU LINK-URI AUTOMATE)
+// ========================================================
+
+app.post("/api/mail/send", async (req, res) => {
+  try {
+    const { to, subject, bodyHtml, bodyText, documentIds, hierarchyId } = req.body;
+    if (!to) {
+      return res.status(400).json({ error: "Destinatarul (To) este obligatoriu." });
+    }
+
+    // Setări globale
+    const settings = await dbAsync.get("SELECT * FROM imap_settings WHERE id = 1") || {};
+
+    // Utilizator curent
+    let user = null;
+    if (req.session.userId) {
+      user = await dbAsync.get("SELECT * FROM users WHERE id = ?", [req.session.userId]);
+    }
+
+    // Preluam documentele încărcate dacă există
+    let documents = [];
+    if (documentIds && Array.isArray(documentIds) && documentIds.length > 0) {
+      const placeholders = documentIds.map(() => "?").join(",");
+      documents = await dbAsync.all(`SELECT * FROM uploaded_documents WHERE id IN (${placeholders})`, documentIds);
+    }
+
+    // Construim URL-ul de bază al serverului
+    const protocol = req.headers["x-forwarded-proto"] || req.protocol || "http";
+    const hostHeader = req.headers["x-forwarded-host"] || req.headers.host;
+    const reqBaseUrl = `${protocol}://${hostHeader}`;
+
+    const sendResult = await sendEmailWithLinks({
+      settings,
+      user,
+      to,
+      subject,
+      bodyHtml,
+      bodyText,
+      documents,
+      reqBaseUrl
+    });
+
+    // Salvăm o copie în tabela emails pentru istoric / ierarhie
+    const messageId = sendResult.messageId || `sent-${Date.now()}@local`;
+    const senderName = user ? user.display_name : "Sistem";
+    const senderEmail = sendResult.sender;
+    const targetHierarchyId = hierarchyId || (user ? user.hierarchy_id : null);
+
+    const attachmentsMeta = documents.map(d => ({
+      filename: d.original_filename,
+      size: d.file_size,
+      download_token: d.download_token
+    }));
+
+    const insEmail = await dbAsync.run(`
+      INSERT INTO emails 
+        (message_id, folder, sender_name, sender_email, recipient, subject, body_text, body_html, hierarchy_id, is_read, attachments_json, user_id)
+      VALUES (?, 'SENT', ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+    `, [
+      messageId,
+      senderName,
+      senderEmail,
+      to,
+      subject,
+      bodyText || "",
+      bodyHtml || "",
+      targetHierarchyId,
+      JSON.stringify(attachmentsMeta),
+      user ? user.id : null
+    ]);
+
+    // Asociem email_id cu documentele încărcate
+    if (documents.length > 0) {
+      const placeholders = documents.map(() => "?").join(",");
+      await dbAsync.run(`UPDATE uploaded_documents SET email_id = ? WHERE id IN (${placeholders})`, [insEmail.id, ...documents.map(d => d.id)]);
+    }
+
+    await dbAsync.run("INSERT INTO system_logs (level, message, source) VALUES (?, ?, ?)", [
+      "INFO",
+      `E-mail trimis cu succes către ${to}. Subiect: ${subject || "(fără)"}. Documente transformate în link: ${documents.length}`,
+      "SMTP_SEND"
+    ]);
+
+    res.json({
+      success: true,
+      messageId: sendResult.messageId,
+      documentsCount: documents.length
+    });
+  } catch (err) {
+    console.error("[SMTP Send Error]:", err);
+    res.status(500).json({ error: "Eroare la trimiterea e-mailului: " + err.message });
   }
 });
 
@@ -734,17 +1003,22 @@ app.post('/api/imap/sync', async (req, res) => {
 // Lista email-uri cu filtrare după nod ierarhic, căutare și stare
 app.get('/api/emails', async (req, res) => {
   try {
+    // PROTECȚIE & CONFIDENȚIALITATE: Doar utilizatorul autentificat are acces exclusiv la mailurile sale!
+    if (!req.session.userId) {
+      return res.json({ emails: [] });
+    }
+
     const { hierarchy_id, search, unread, flagged } = req.query;
 
     let query = `
       SELECT e.id, e.message_id, e.sender_name, e.sender_email, e.recipient, e.subject, 
-             e.date_received, e.hierarchy_id, e.is_read, e.is_flagged,
+             e.date_received, e.hierarchy_id, e.is_read, e.is_flagged, e.attachments_json,
              h.name as hierarchy_name, h.color as hierarchy_color, h.level_depth
       FROM emails e
       LEFT JOIN hierarchy_nodes h ON e.hierarchy_id = h.id
-      WHERE 1=1
+      WHERE e.user_id = ?
     `;
-    const params = [];
+    const params = [req.session.userId];
 
     if (hierarchy_id !== undefined && hierarchy_id !== '') {
       if (hierarchy_id === 'unassigned') {
@@ -799,8 +1073,8 @@ app.get('/api/emails/:id', async (req, res) => {
       SELECT e.*, h.name as hierarchy_name, h.color as hierarchy_color, h.level_depth
       FROM emails e
       LEFT JOIN hierarchy_nodes h ON e.hierarchy_id = h.id
-      WHERE e.id = ?
-    `, [req.params.id]);
+      WHERE e.id = ? AND e.user_id = ?
+    `, [req.params.id, req.session.userId]);
 
     if (!email) {
       return res.status(404).json({ error: 'Mesajul nu a fost găsit.' });
@@ -821,8 +1095,16 @@ app.get('/api/emails/:id', async (req, res) => {
 // Asociere email la un nivel din structura ierarhica
 app.put('/api/emails/:id/hierarchy', async (req, res) => {
   try {
+    if (!req.session.userId) {
+      return res.status(401).json({ error: "Trebuie să fiți autentificat." });
+    }
     const { id } = req.params;
     const { hierarchy_id } = req.body;
+    // Verificam ca emailul apartine utilizatorului
+    const checkEmail = await dbAsync.get("SELECT id FROM emails WHERE id = ? AND user_id = ?", [id, req.session.userId]);
+    if (!checkEmail) {
+      return res.status(403).json({ error: "Nu aveți permisiunea de a modifica acest e-mail." });
+    }
 
     const targetHId = (hierarchy_id === null || hierarchy_id === '' || hierarchy_id === 'none') ? null : parseInt(hierarchy_id);
 
@@ -843,8 +1125,16 @@ app.put('/api/emails/:id/hierarchy', async (req, res) => {
 // Marcare citit / necitit / stelat
 app.put('/api/emails/:id/status', async (req, res) => {
   try {
+    if (!req.session.userId) {
+      return res.status(401).json({ error: "Trebuie să fiți autentificat." });
+    }
     const { id } = req.params;
     const { is_read, is_flagged } = req.body;
+    // Verificam ca emailul apartine utilizatorului
+    const checkEmail = await dbAsync.get("SELECT id FROM emails WHERE id = ? AND user_id = ?", [id, req.session.userId]);
+    if (!checkEmail) {
+      return res.status(403).json({ error: "Nu aveți acces la acest e-mail." });
+    }
 
     if (is_read !== undefined) {
       await dbAsync.run('UPDATE emails SET is_read = ? WHERE id = ?', [is_read ? 1 : 0, id]);
@@ -862,7 +1152,10 @@ app.put('/api/emails/:id/status', async (req, res) => {
 // Stergere email
 app.delete('/api/emails/:id', async (req, res) => {
   try {
-    await dbAsync.run('DELETE FROM emails WHERE id = ?', [req.params.id]);
+    if (!req.session.userId) {
+      return res.status(401).json({ error: "Trebuie să fiți autentificat." });
+    }
+    const result = await dbAsync.run('DELETE FROM emails WHERE id = ? AND user_id = ?', [req.params.id, req.session.userId]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -908,10 +1201,11 @@ const distPath = path.join(__dirname, '..', 'dist');
 if (require('fs').existsSync(distPath)) {
   app.use(express.static(distPath));
   // SPA fallback: toate rutele non-API servesc index.html
-  app.get('*', (req, res) => {
-    if (!req.path.startsWith('/api')) {
-      res.sendFile(path.join(distPath, 'index.html'));
+  app.use((req, res, next) => {
+    if (req.method === "GET" && !req.path.startsWith("/api")) {
+      return res.sendFile(path.join(distPath, "index.html"));
     }
+    next();
   });
   console.log('[STATIC] Servire frontend din:', distPath);
 }

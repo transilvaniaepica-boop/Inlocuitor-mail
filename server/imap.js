@@ -22,6 +22,7 @@ async function testImapConnection(settings) {
     connectionTimeout: 10000,
     greetingTimeout: 10000
   });
+  client.on('error', (err) => { console.warn('[IMAP Test Client Error Handled]:', err.message); });
 
   const startTime = Date.now();
   await client.connect();
@@ -58,6 +59,7 @@ async function syncImap(settings, specificUser = null) {
     logger: false,
     connectionTimeout: 15000
   });
+  client.on('error', (err) => { console.warn('[IMAP Sync Client Error Handled]:', err.message); });
 
   let newCount = 0;
 
@@ -86,8 +88,14 @@ async function syncImap(settings, specificUser = null) {
           const envelope = msg.envelope;
           const messageId = envelope.messageId || `gen-${msg.uid}-${Date.now()}@local`;
 
-          // Verificam daca emailul exista deja
-          const existing = await dbAsync.get('SELECT id FROM emails WHERE message_id = ?', [messageId]);
+          // Verificam daca emailul exista deja PENTRU ACEST UTILIZATOR
+          const userId = specificUser ? specificUser.id : null;
+          const existing = await dbAsync.get(
+            userId !== null
+              ? 'SELECT id FROM emails WHERE message_id = ? AND user_id = ?'
+              : 'SELECT id FROM emails WHERE message_id = ? AND user_id IS NULL',
+            userId !== null ? [messageId, userId] : [messageId]
+          );
           if (existing) continue;
 
           // Parsare continut complet MIME
@@ -110,8 +118,8 @@ async function syncImap(settings, specificUser = null) {
 
           await dbAsync.run(`
             INSERT INTO emails 
-              (message_id, uid, folder, sender_name, sender_email, recipient, subject, body_text, body_html, date_received, attachments_json)
-            VALUES (?, ?, 'INBOX', ?, ?, ?, ?, ?, ?, ?, ?)
+              (message_id, uid, folder, sender_name, sender_email, recipient, subject, body_text, body_html, date_received, attachments_json, user_id)
+            VALUES (?, ?, 'INBOX', ?, ?, ?, ?, ?, ?, ?, ?, ?)
           `, [
             messageId,
             msg.uid,
@@ -122,7 +130,8 @@ async function syncImap(settings, specificUser = null) {
             bodyText,
             bodyHtml,
             dateReceived,
-            JSON.stringify(attachments)
+            JSON.stringify(attachments),
+            specificUser ? specificUser.id : null
           ]);
 
           newCount++;
