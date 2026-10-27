@@ -732,6 +732,101 @@ app.post('/api/settings/imap', requireAdmin, async (req, res) => {
   }
 });
 
+
+// ========================================================
+// USER MAIL SETTINGS - fiecare utilizator isi poate configura propria casuta
+// ========================================================
+
+// GET setarile de mail ale utilizatorului curent
+app.get('/api/user/mail-settings', async (req, res) => {
+  try {
+    if (!req.session.userId) return res.status(401).json({ error: 'Neautentificat' });
+    const user = await dbAsync.get(
+      `SELECT imap_host, imap_port, imap_tls, imap_user,
+              (CASE WHEN imap_pass IS NOT NULL AND imap_pass != '' THEN 1 ELSE 0 END) as has_imap_pass,
+              smtp_host, smtp_port, smtp_secure, smtp_user,
+              (CASE WHEN smtp_pass IS NOT NULL AND smtp_pass != '' THEN 1 ELSE 0 END) as has_smtp_pass
+       FROM users WHERE id = ?`,
+      [req.session.userId]
+    );
+    if (!user) return res.status(404).json({ error: 'Utilizator negasit' });
+    res.json({ settings: user });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST salveaza setarile de mail ale utilizatorului curent
+app.post('/api/user/mail-settings', async (req, res) => {
+  try {
+    if (!req.session.userId) return res.status(401).json({ error: 'Neautentificat' });
+    const { imap_host, imap_port, imap_tls, imap_user, imap_pass, smtp_host, smtp_port, smtp_secure, smtp_user, smtp_pass } = req.body;
+
+    let query = `UPDATE users SET
+      imap_host = ?, imap_port = ?, imap_tls = ?, imap_user = ?,
+      smtp_host = ?, smtp_port = ?, smtp_secure = ?, smtp_user = ?`;
+    let params = [
+      imap_host || null,
+      imap_port ? parseInt(imap_port) : 993,
+      imap_tls !== undefined ? (imap_tls ? 1 : 0) : 1,
+      imap_user ? imap_user.trim() : null,
+      smtp_host || null,
+      smtp_port ? parseInt(smtp_port) : 465,
+      smtp_secure !== undefined ? (smtp_secure ? 1 : 0) : 1,
+      smtp_user ? smtp_user.trim() : null
+    ];
+
+    if (imap_pass && imap_pass.trim()) {
+      query += ', imap_pass = ?';
+      params.push(imap_pass.trim());
+    }
+    if (smtp_pass && smtp_pass.trim()) {
+      query += ', smtp_pass = ?';
+      params.push(smtp_pass.trim());
+    }
+
+    query += ' WHERE id = ?';
+    params.push(req.session.userId);
+
+    await dbAsync.run(query, params);
+    res.json({ success: true, message: 'Setarile au fost salvate cu succes.' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST testare conexiune IMAP pentru utilizatorul curent
+app.post('/api/user/imap/test', async (req, res) => {
+  try {
+    if (!req.session.userId) return res.status(401).json({ error: 'Neautentificat' });
+    const { imap_host, imap_port, imap_tls, imap_user, imap_pass } = req.body;
+
+    // Daca nu se trimite parola, o luam din baza de date
+    let password = imap_pass;
+    if (!password || !password.trim()) {
+      const user = await dbAsync.get('SELECT imap_pass FROM users WHERE id = ?', [req.session.userId]);
+      if (user) password = user.imap_pass;
+    }
+
+    const settings = {
+      host: imap_host,
+      port: parseInt(imap_port) || 993,
+      tls: imap_tls !== undefined ? (imap_tls ? true : false) : true,
+      username: imap_user,
+      password: password
+    };
+
+    if (!settings.host || !settings.username || !settings.password) {
+      return res.status(400).json({ success: false, error: 'Completati toate campurile obligatorii (host, utilizator, parola).' });
+    }
+
+    const result = await testImapConnection(settings);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Test live conexiune IMAP
 app.post('/api/imap/test', requireAdmin, async (req, res) => {
   try {
