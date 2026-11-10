@@ -11,7 +11,3 @@ services:
         value: production
       - key: SESSION_SECRET
         generateValue: true
-    disk:
-      name: sqlite-data
-      mountPath: /data
-      sizeGB: 1
