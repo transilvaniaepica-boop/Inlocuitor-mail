@@ -106,7 +106,7 @@ db.serialize(async () => {
   db.run(`
     CREATE TABLE IF NOT EXISTS emails (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      message_id TEXT UNIQUE,
+      message_id TEXT,
       uid INTEGER,
       folder TEXT DEFAULT 'INBOX',
       sender_name TEXT,
@@ -120,6 +120,7 @@ db.serialize(async () => {
       is_read INTEGER DEFAULT 0,
       is_flagged INTEGER DEFAULT 0,
       attachments_json TEXT DEFAULT '[]',
+      user_id INTEGER,
       FOREIGN KEY(hierarchy_id) REFERENCES hierarchy_nodes(id) ON DELETE SET NULL
     )
   `);
@@ -134,6 +135,74 @@ db.serialize(async () => {
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  
+  
+  // Migrare: proprietar email (izolare stricta per utilizator)
+  db.run("ALTER TABLE emails ADD COLUMN user_id INTEGER", () => {});
+  db.run("CREATE INDEX IF NOT EXISTS idx_emails_user ON emails(user_id)", () => {});
+  db.run("CREATE INDEX IF NOT EXISTS idx_emails_user_msg ON emails(user_id, message_id)", () => {});
+
+  // Migrare: coloane SMTP si IMAP dedicate per utilizator
+  db.run("ALTER TABLE users ADD COLUMN smtp_host TEXT", () => {});
+  db.run("ALTER TABLE users ADD COLUMN smtp_port INTEGER DEFAULT 465", () => {});
+  db.run("ALTER TABLE users ADD COLUMN smtp_secure INTEGER DEFAULT 1", () => {});
+  db.run("ALTER TABLE users ADD COLUMN smtp_user TEXT", () => {});
+  db.run("ALTER TABLE users ADD COLUMN smtp_pass TEXT", () => {});
+  db.run("ALTER TABLE users ADD COLUMN imap_host TEXT", () => {});
+  db.run("ALTER TABLE users ADD COLUMN imap_port INTEGER DEFAULT 993", () => {});
+  db.run("ALTER TABLE users ADD COLUMN imap_tls INTEGER DEFAULT 1", () => {});
+
+  // Migrare: coloane globale SMTP in imap_settings
+  db.run("ALTER TABLE imap_settings ADD COLUMN smtp_host TEXT DEFAULT 'mail.pbasig.ro'", () => {});
+  db.run("ALTER TABLE imap_settings ADD COLUMN smtp_port INTEGER DEFAULT 465", () => {});
+  db.run("ALTER TABLE imap_settings ADD COLUMN smtp_secure INTEGER DEFAULT 1", () => {});
+  db.run("ALTER TABLE imap_settings ADD COLUMN smtp_user TEXT DEFAULT ''", () => {});
+  db.run("ALTER TABLE imap_settings ADD COLUMN smtp_pass TEXT DEFAULT ''", () => {});
+
+  // Tabela pentru documentele incarcate si transformate in link-uri de descarcare securizate
+  db.run(`
+    CREATE TABLE IF NOT EXISTS uploaded_documents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      download_token TEXT UNIQUE NOT NULL,
+      original_filename TEXT NOT NULL,
+      stored_filename TEXT NOT NULL,
+      file_size INTEGER NOT NULL,
+      mime_type TEXT,
+      uploader_user_id INTEGER,
+      email_id INTEGER,
+      download_count INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY(uploader_user_id) REFERENCES users(id) ON DELETE SET NULL
+    )
+  `);
+
+  // 7. MESAJE STERSE (pentru a nu fi reimportate la sincronizare IMAP)
+  db.run(`
+    CREATE TABLE IF NOT EXISTS deleted_emails (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id TEXT NOT NULL,
+      uid INTEGER,
+      user_id INTEGER NOT NULL,
+      sender_email TEXT,
+      deleted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      deleted_from_imap INTEGER DEFAULT 0
+    )
+  `);
+
+  // 8. EXCEPTII DE LA STERGERE (domenii protejate - mailurile NU se sterg din IMAP)
+  db.run(`
+    CREATE TABLE IF NOT EXISTS delete_exceptions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      domain TEXT NOT NULL UNIQUE,
+      description TEXT,
+      added_by_admin INTEGER DEFAULT 1,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  db.run(`CREATE INDEX IF NOT EXISTS idx_deleted_emails_user_msg ON deleted_emails(user_id, message_id)`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_deleted_emails_user_uid ON deleted_emails(user_id, uid)`);
 
   // Initializare parola de administrare (Default: admin1234)
   db.get('SELECT COUNT(*) as count FROM admin_settings', [], (err, row) => {

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Layers, Users, Server, FileText, Plus, Edit, Trash2, 
-  Check, X, QrCode, Smartphone, RefreshCw, Key, ShieldCheck, 
+  Check, X, QrCode, Smartphone, RefreshCw, Send, Key, ShieldCheck, Shield,
   ChevronRight, CornerDownRight, CheckCircle2, AlertTriangle,
   UserPlus, Briefcase, Tag, UserCheck
 } from 'lucide-react';
@@ -12,7 +12,12 @@ export default function AdminPanel({
   onReloadHierarchy,
   onShowToast
 }) {
-  const [activeTab, setActiveTab] = useState('hierarchy'); // hierarchy, users, imap, security
+  const [activeTab, setActiveTab] = useState('hierarchy'); // hierarchy, users, imap, security, exceptions
+
+  // Stari pentru Exceptii de la Stergere
+  const [deleteExceptions, setDeleteExceptions] = useState([]);
+  const [newExceptionDomain, setNewExceptionDomain] = useState('');
+  const [newExceptionDesc, setNewExceptionDesc] = useState('');
 
   // Stari pentru Ierarhie
   const [nodeModalOpen, setNodeModalOpen] = useState(false);
@@ -38,6 +43,12 @@ export default function AdminPanel({
   const [userFormHierarchyId, setUserFormHierarchyId] = useState('');
   const [userFormImapUser, setUserFormImapUser] = useState('');
   const [userFormImapPass, setUserFormImapPass] = useState('');
+  const [userFormImapHost, setUserFormImapHost] = useState('');
+  const [userFormImapPort, setUserFormImapPort] = useState(993);
+  const [userFormSmtpHost, setUserFormSmtpHost] = useState('');
+  const [userFormSmtpPort, setUserFormSmtpPort] = useState(465);
+  const [userFormSmtpUser, setUserFormSmtpUser] = useState('');
+  const [userFormSmtpPass, setUserFormSmtpPass] = useState('');
 
   // Stari pentru 2FA
   const [twoFaModalOpen, setTwoFaModalOpen] = useState(false);
@@ -53,11 +64,18 @@ export default function AdminPanel({
     tls: 1,
     username: '',
     password: '',
+    smtp_host: 'mail.pbasig.ro',
+    smtp_port: 465,
+    smtp_secure: 1,
+    smtp_user: '',
+    smtp_pass: '',
     auto_sync: 1,
     sync_interval: 5
   });
   const [imapTestResult, setImapTestResult] = useState(null);
   const [isTestingImap, setIsTestingImap] = useState(false);
+  const [isTestingSmtp, setIsTestingSmtp] = useState(false);
+  const [smtpTestResult, setSmtpTestResult] = useState(null);
 
   // Stare Parola Admin
   const [currentAdminPass, setCurrentAdminPass] = useState('');
@@ -66,11 +84,60 @@ export default function AdminPanel({
   useEffect(() => {
     fetchUsers();
     fetchImapSettings();
+    fetchDeleteExceptions();
   }, []);
+
+  const fetchDeleteExceptions = async () => {
+    try {
+      const res = await fetch('/api/admin/delete-exceptions', { credentials: 'include' });
+      const data = await res.json();
+      if (res.ok) setDeleteExceptions(data.exceptions || []);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleAddException = async (e) => {
+    e.preventDefault();
+    if (!newExceptionDomain.trim()) return;
+    try {
+      const res = await fetch('/api/admin/delete-exceptions', {
+        credentials: 'include',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ domain: newExceptionDomain.trim(), description: newExceptionDesc.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Eroare la adăugare');
+      onShowToast(`Domeniul "${data.domain}" a fost adăugat la excepții.`, 'success');
+      setNewExceptionDomain('');
+      setNewExceptionDesc('');
+      fetchDeleteExceptions();
+    } catch (err) {
+      onShowToast(err.message, 'error');
+    }
+  };
+
+  const handleDeleteException = async (exception) => {
+    if (!window.confirm(`Sunteți sigur că doriți să eliminați domeniul "${exception.domain}" din excepții?\n\nMailurile de la acest domeniu vor fi șterse și din serverul IMAP la ștergerea locală.`)) {
+      return;
+    }
+    try {
+      const res = await fetch(`/api/admin/delete-exceptions/${exception.id}`, {
+        credentials: 'include',
+        method: 'DELETE'
+      });
+      if (!res.ok) throw new Error('Eroare la eliminarea excepției');
+      onShowToast(`Domeniul "${exception.domain}" a fost eliminat din excepții.`, 'success');
+      fetchDeleteExceptions();
+    } catch (err) {
+      onShowToast(err.message, 'error');
+    }
+  };
 
   const fetchUsers = async () => {
     try {
-      const res = await fetch('/api/admin/users');
+      const res = await fetch('/api/admin/users', { credentials: 'include' });
       const data = await res.json();
       if (res.ok) setUsers(data.users || []);
     } catch (err) {
@@ -80,9 +147,10 @@ export default function AdminPanel({
 
   const fetchImapSettings = async () => {
     try {
-      const res = await fetch('/api/settings/imap');
+      const res = await fetch('/api/settings/mail', { credentials: 'include' });
       const data = await res.json();
-      if (res.ok) setImapSettings(prev => ({ ...prev, ...data }));
+      const s = data.settings || data;
+      if (res.ok) setImapSettings(prev => ({ ...prev, ...s }));
     } catch (err) {
       console.error(err);
     }
@@ -98,8 +166,14 @@ export default function AdminPanel({
     setUserFormRole('user');
     setUserFormJobTitle('');
     setUserFormHierarchyId(preselectedHierarchyId ? String(preselectedHierarchyId) : '');
+    setUserFormImapHost('');
+    setUserFormImapPort(993);
     setUserFormImapUser('');
     setUserFormImapPass('');
+    setUserFormSmtpHost('');
+    setUserFormSmtpPort(465);
+    setUserFormSmtpUser('');
+    setUserFormSmtpPass('');
     setUserModalOpen(true);
   };
 
@@ -112,8 +186,14 @@ export default function AdminPanel({
     setUserFormRole(user.role || 'user');
     setUserFormJobTitle(user.job_title || '');
     setUserFormHierarchyId(user.hierarchy_id ? String(user.hierarchy_id) : '');
+    setUserFormImapHost(user.imap_host || '');
+    setUserFormImapPort(user.imap_port || 993);
     setUserFormImapUser(user.imap_user || '');
     setUserFormImapPass('');
+    setUserFormSmtpHost(user.smtp_host || '');
+    setUserFormSmtpPort(user.smtp_port || 465);
+    setUserFormSmtpUser(user.smtp_user || '');
+    setUserFormSmtpPass('');
     setUserModalOpen(true);
   };
 
@@ -122,7 +202,7 @@ export default function AdminPanel({
     try {
       if (editingUser) {
         // Editare
-        const res = await fetch(`/api/admin/users/${editingUser.id}`, {
+        const res = await fetch(`/api/admin/users/${editingUser.id}`, { credentials: 'include',
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -131,19 +211,23 @@ export default function AdminPanel({
             role: userFormRole,
             job_title: userFormJobTitle,
             hierarchy_id: userFormHierarchyId,
+            imap_host: userFormImapHost,
+            imap_port: userFormImapPort,
             imap_user: userFormImapUser,
             imap_pass: userFormImapPass,
-            imap_user: userFormImapUser,
-            imap_pass: userFormImapPass,
+            smtp_host: userFormSmtpHost,
+            smtp_port: userFormSmtpPort,
+            smtp_user: userFormSmtpUser,
+            smtp_pass: userFormSmtpPass,
             password: userFormPassword
           })
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Eroare la actualizarea utilizatorului');
-        onShowToast('Utilizatorul și poziția ierarhică au fost actualizate!', 'success');
+        onShowToast('Utilizatorul și setările sale de e-mail au fost actualizate!', 'success');
       } else {
         // Adaugare utilizator nou
-        const res = await fetch('/api/admin/users', {
+        const res = await fetch('/api/admin/users', { credentials: 'include',
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -154,8 +238,14 @@ export default function AdminPanel({
             role: userFormRole,
             job_title: userFormJobTitle,
             hierarchy_id: userFormHierarchyId,
+            imap_host: userFormImapHost,
+            imap_port: userFormImapPort,
             imap_user: userFormImapUser,
-            imap_pass: userFormImapPass
+            imap_pass: userFormImapPass,
+            smtp_host: userFormSmtpHost,
+            smtp_port: userFormSmtpPort,
+            smtp_user: userFormSmtpUser,
+            smtp_pass: userFormSmtpPass
           })
         });
         const data = await res.json();
@@ -176,7 +266,7 @@ export default function AdminPanel({
       return;
     }
     try {
-      const res = await fetch(`/api/admin/users/${user.id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/admin/users/${user.id}`, { credentials: 'include', method: 'DELETE' });
       if (!res.ok) throw new Error('Eroare la ștergerea utilizatorului');
       onShowToast('Utilizatorul a fost șters.', 'success');
       fetchUsers();
@@ -221,7 +311,7 @@ export default function AdminPanel({
     e.preventDefault();
     try {
       if (editingNode) {
-        const res = await fetch(`/api/hierarchy/${editingNode.id}`, {
+        const res = await fetch(`/api/hierarchy/${editingNode.id}`, { credentials: 'include',
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -234,7 +324,7 @@ export default function AdminPanel({
         if (!res.ok) throw new Error('Eroare la actualizarea denumirii');
         onShowToast('Denumire nivel actualizată cu succes!', 'success');
       } else {
-        const res = await fetch('/api/hierarchy', {
+        const res = await fetch('/api/hierarchy', { credentials: 'include',
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -261,7 +351,7 @@ export default function AdminPanel({
       return;
     }
     try {
-      const res = await fetch(`/api/hierarchy/${node.id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/hierarchy/${node.id}`, { credentials: 'include', method: 'DELETE' });
       if (!res.ok) throw new Error('Eroare la ștergerea nivelului');
       onShowToast(`Nivelul și subnivelele au fost șterse.`, 'success');
       onReloadHierarchy();
@@ -277,7 +367,7 @@ export default function AdminPanel({
     setVerifyTestCode('');
     setVerifyStatus(null);
     try {
-      const res = await fetch(`/api/admin/users/${user.id}/setup-2fa`, { method: 'POST' });
+      const res = await fetch(`/api/admin/users/${user.id}/setup-2fa`, { credentials: 'include', method: 'POST' });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
       setTwoFaData(data);
@@ -289,7 +379,7 @@ export default function AdminPanel({
 
   const handleToggle2FA = async (userId, newStatus) => {
     try {
-      const res = await fetch(`/api/admin/users/${userId}/toggle-2fa`, {
+      const res = await fetch(`/api/admin/users/${userId}/toggle-2fa`, { credentials: 'include',
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: newStatus })
@@ -306,7 +396,7 @@ export default function AdminPanel({
   const handleTest2FACode = async () => {
     if (!verifyTestCode || verifyTestCode.length !== 6) return;
     try {
-      const res = await fetch('/api/auth/verify-2fa', {
+      const res = await fetch('/api/auth/verify-2fa', { credentials: 'include',
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token: verifyTestCode })
@@ -326,7 +416,7 @@ export default function AdminPanel({
     setIsTestingImap(true);
     setImapTestResult(null);
     try {
-      const res = await fetch('/api/imap/test', {
+      const res = await fetch('/api/imap/test', { credentials: 'include',
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(imapSettings)
@@ -340,16 +430,35 @@ export default function AdminPanel({
     }
   };
 
+  
+    const handleTestSmtp = async () => {
+    setIsTestingSmtp(true);
+    setSmtpTestResult(null);
+    try {
+      const res = await fetch('/api/smtp/test', { credentials: 'include',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(imapSettings)
+      });
+      const data = await res.json();
+      setSmtpTestResult(data);
+    } catch (err) {
+      setSmtpTestResult({ success: false, error: err.message });
+    } finally {
+      setIsTestingSmtp(false);
+    }
+  };
+
   const handleSaveImap = async (e) => {
     e.preventDefault();
     try {
-      const res = await fetch('/api/settings/imap', {
+      const res = await fetch('/api/settings/mail', { credentials: 'include',
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(imapSettings)
       });
       if (!res.ok) throw new Error('Eroare la salvarea setărilor IMAP');
-      onShowToast('Setările IMAP au fost salvate cu succes!', 'success');
+      onShowToast('Setările de corespondență (Incoming IMAP & Outgoing SMTP) au fost salvate cu succes!', 'success');
     } catch (err) {
       onShowToast(err.message, 'error');
     }
@@ -359,7 +468,7 @@ export default function AdminPanel({
   const handleChangeAdminPassword = async (e) => {
     e.preventDefault();
     try {
-      const res = await fetch('/api/admin/change-password', {
+      const res = await fetch('/api/admin/change-password', { credentials: 'include',
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -543,6 +652,14 @@ export default function AdminPanel({
             <Key size={16} />
             Securitate Parolă Admin
           </button>
+
+          <button
+            className={`admin-tab ${activeTab === 'exceptions' ? 'active' : ''}`}
+            onClick={() => setActiveTab('exceptions')}
+          >
+            <Shield size={16} />
+            Excepții de la ștergere
+          </button>
         </div>
       </div>
 
@@ -632,8 +749,19 @@ export default function AdminPanel({
                         )}
                         {u.imap_user && (
                           <div style={{ fontSize: '0.725rem', color: '#34d399', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                            📬 IMAP dedicat: {u.imap_user} {u.has_imap_pass ? '✓' : ''}
+                            📬 IMAP: {u.imap_user} {u.has_imap_pass ? '✓' : ''}
                           </div>
+                        )}
+                        {u.smtp_user ? (
+                          <div style={{ fontSize: '0.725rem', color: '#60a5fa', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                            📤 SMTP: {u.smtp_user} {u.has_smtp_pass ? '✓' : ''}
+                          </div>
+                        ) : (
+                          u.imap_user && (
+                            <div style={{ fontSize: '0.725rem', color: '#94a3b8', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              📤 SMTP: {u.imap_user} (din IMAP)
+                            </div>
+                          )
                         )}
                       </td>
 
@@ -805,14 +933,253 @@ export default function AdminPanel({
                   disabled={isTestingImap}
                 >
                   <RefreshCw size={15} className={isTestingImap ? 'animate-spin' : ''} />
-                  {isTestingImap ? 'Se testează...' : 'Testează Conexiunea IMAP'}
+                  {isTestingImap ? 'Se testează...' : 'Testează Conexiunea IMAP (Incoming)'}
                 </button>
+              </div>
 
-                <button type="submit" className="btn btn-primary">
-                  Salvează Setările IMAP
+              {/* SECTIUNE OUTGOING SMTP */}
+              <div style={{ margin: "24px 0 16px 0", borderTop: "1px solid var(--border-color)", paddingTop: "18px" }}>
+                <h4 style={{ margin: "0 0 6px 0", fontSize: "1rem", color: "#60a5fa", display: "flex", alignItems: "center", gap: "8px" }}>
+                  <Send size={16} />
+                  Configurare Server Outgoing (SMTP - Trimitere Mesaje & Link-uri)
+                </h4>
+                <p style={{ margin: "0 0 14px 0", fontSize: "0.785rem", color: "var(--text-muted)" }}>
+                  Serverul utilizat pentru trimiterea e-mailurilor și transmiterea automată a documentelor ca link-uri securizate.
+                </p>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1.2fr 0.8fr", gap: "16px" }}>
+                  <div className="form-group">
+                    <label className="form-label">Gazdă SMTP (Server de trimitere)</label>
+                    <input
+                      type="text"
+                      value={imapSettings.smtp_host || ""}
+                      onChange={(e) => setImapSettings({ ...imapSettings, smtp_host: e.target.value })}
+                      placeholder="mail.pbasig.ro"
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Port SMTP & Securitate</label>
+                    <div style={{ display: "flex", gap: "8px" }}>
+                      <input
+                        type="number"
+                        style={{ width: "90px" }}
+                        value={imapSettings.smtp_port || 465}
+                        onChange={(e) => setImapSettings({ ...imapSettings, smtp_port: e.target.value })}
+                      />
+                      <select
+                        value={imapSettings.smtp_secure !== undefined ? imapSettings.smtp_secure : 1}
+                        onChange={(e) => setImapSettings({ ...imapSettings, smtp_secure: parseInt(e.target.value) })}
+                      >
+                        <option value={1}>SSL / TLS (Port 465)</option>
+                        <option value={0}>STARTTLS (Port 587)</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginTop: "12px" }}>
+                  <div className="form-group">
+                    <label className="form-label">Utilizator SMTP (Email Expeditor)</label>
+                    <input
+                      type="text"
+                      value={imapSettings.smtp_user || ""}
+                      onChange={(e) => setImapSettings({ ...imapSettings, smtp_user: e.target.value })}
+                      placeholder="office@domeniu.ro"
+                    />
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">Parolă SMTP</label>
+                    <input
+                      type="password"
+                      value={imapSettings.smtp_pass || ""}
+                      onChange={(e) => setImapSettings({ ...imapSettings, smtp_pass: e.target.value })}
+                      placeholder="Lăsați gol pentru a păstra parola actuală..."
+                    />
+                  </div>
+                </div>
+
+                {smtpTestResult && (
+                  <div style={{
+                    padding: "10px 14px",
+                    borderRadius: "6px",
+                    fontSize: "0.85rem",
+                    marginTop: "12px",
+                    background: smtpTestResult.success ? "rgba(16, 185, 129, 0.15)" : "rgba(239, 68, 68, 0.15)",
+                    border: "1px solid " + (smtpTestResult.success ? "#10b981" : "#ef4444"),
+                    color: smtpTestResult.success ? "#a7f3d0" : "#fca5a5"
+                  }}>
+                    {smtpTestResult.success ? (
+                      <div><strong>Conexiune SMTP reușită!</strong> Timp de răspuns: {smtpTestResult.latencyMs} ms. Serverul este gata de trimitere.</div>
+                    ) : (
+                      <div><strong>Eroare SMTP:</strong> {smtpTestResult.error}</div>
+                    )}
+                  </div>
+                )}
+
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "14px" }}>
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    onClick={handleTestSmtp}
+                    disabled={isTestingSmtp}
+                  >
+                    <Send size={14} className={isTestingSmtp ? "animate-spin" : ""} />
+                    {isTestingSmtp ? "Se testează..." : "Testează Conexiunea SMTP (Outgoing)"}
+                  </button>
+
+                  <button type="submit" className="btn btn-primary">
+                    Salvează Toate Setările de Corespondență
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {/* TAB 5: EXCEPTII DE LA STERGERE */}
+        {activeTab === 'exceptions' && (
+          <div style={{ maxWidth: '750px', margin: '0 auto' }}>
+            <h3 style={{ fontSize: '1.2rem', fontWeight: 700, marginBottom: '6px' }}>Excepții de la ștergere</h3>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '24px' }}>
+              Domeniile din această listă sunt <strong>protejate</strong>: când un utilizator șterge un e-mail primit de la aceste domenii, 
+              mesajul este eliminat doar din aplicație, <strong>NU</strong> și din căsuța poștală originală (serverul IMAP). 
+              Pentru orice alt domeniu, e-mailul se va șterge și din căsuța originală de pe server. 
+              În ambele cazuri, e-mailul șters <strong>nu va mai reapărea</strong> la apăsarea butonului de sincronizare IMAP.
+            </p>
+
+            {/* Formular Adaugare Domeniu */}
+            <form onSubmit={handleAddException} style={{ 
+              background: 'var(--bg-secondary)', 
+              padding: '20px', 
+              borderRadius: '10px', 
+              border: '1px solid var(--border-color)', 
+              marginBottom: '24px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '12px'
+            }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.5fr', gap: '12px' }}>
+                <div className="form-group">
+                  <label className="form-label">Domeniu protejat</label>
+                  <input
+                    type="text"
+                    required
+                    value={newExceptionDomain}
+                    onChange={(e) => setNewExceptionDomain(e.target.value)}
+                    placeholder="exemplu: domeniu.ro sau gmail.com"
+                    style={{ fontSize: '0.9rem' }}
+                  />
+                </div>
+                <div className="form-group">
+                  <label className="form-label">Descriere / Notă (opțional)</label>
+                  <input
+                    type="text"
+                    value={newExceptionDesc}
+                    onChange={(e) => setNewExceptionDesc(e.target.value)}
+                    placeholder="ex: Clienți strategici, parteneri, audit"
+                    style={{ fontSize: '0.9rem' }}
+                  />
+                </div>
+              </div>
+              <div>
+                <button type="submit" className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Plus size={15} />
+                  Adaugă Domeniu în Excepții
                 </button>
               </div>
             </form>
+
+            {/* Tabel Domenii Protejate */}
+            <div style={{ 
+              background: 'var(--bg-secondary)', 
+              borderRadius: '10px', 
+              border: '1px solid var(--border-color)',
+              overflow: 'hidden'
+            }}>
+              <div style={{ 
+                padding: '14px 20px', 
+                borderBottom: '1px solid var(--border-color)', 
+                fontSize: '0.9rem', 
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                color: '#60a5fa'
+              }}>
+                <Shield size={16} />
+                Domenii Protejate de la Ștergerea IMAP ({deleteExceptions.length})
+              </div>
+
+              {deleteExceptions.length === 0 ? (
+                <div style={{ padding: '32px 20px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                  Nu există domenii adăugate în lista de excepții. E-mailurile șterse vor fi eliminate și din căsuța poștală originală (serverul IMAP).
+                </div>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.88rem' }}>
+                  <thead>
+                    <tr style={{ borderBottom: '1px solid var(--border-color)' }}>
+                      <th style={{ padding: '10px 20px', textAlign: 'left', fontWeight: 600, color: 'var(--text-secondary)' }}>Domeniu</th>
+                      <th style={{ padding: '10px 20px', textAlign: 'left', fontWeight: 600, color: 'var(--text-secondary)' }}>Descriere</th>
+                      <th style={{ padding: '10px 20px', textAlign: 'left', fontWeight: 600, color: 'var(--text-secondary)' }}>Data adăugării</th>
+                      <th style={{ padding: '10px 20px', textAlign: 'center', fontWeight: 600, color: 'var(--text-secondary)' }}>Acțiuni</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {deleteExceptions.map((exc) => (
+                      <tr key={exc.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
+                        <td style={{ padding: '12px 20px', fontWeight: 600 }}>
+                          <span style={{ 
+                            background: 'rgba(59, 130, 246, 0.15)', 
+                            color: '#60a5fa', 
+                            padding: '3px 10px', 
+                            borderRadius: '4px',
+                            fontSize: '0.85rem',
+                            fontFamily: 'monospace'
+                          }}>
+                            @{exc.domain}
+                          </span>
+                        </td>
+                        <td style={{ padding: '12px 20px', color: 'var(--text-secondary)' }}>
+                          {exc.description || '—'}
+                        </td>
+                        <td style={{ padding: '12px 20px', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
+                          {exc.created_at ? new Date(exc.created_at).toLocaleDateString('ro-RO', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                        </td>
+                        <td style={{ padding: '12px 20px', textAlign: 'center' }}>
+                          <button 
+                            className="btn btn-danger"
+                            style={{ padding: '4px 10px', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                            onClick={() => handleDeleteException(exc)}
+                          >
+                            <Trash2 size={13} />
+                            Elimină
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+
+            <div style={{ 
+              marginTop: '20px', 
+              padding: '14px 18px', 
+              background: 'rgba(250, 204, 21, 0.08)', 
+              border: '1px solid rgba(250, 204, 21, 0.3)', 
+              borderRadius: '8px',
+              fontSize: '0.82rem',
+              color: '#fcd34d'
+            }}>
+              <strong>Informație:</strong> Când un utilizator șterge un e-mail:
+              <ul style={{ margin: '6px 0 0 18px', padding: 0 }}>
+                <li>Dacă adresa expeditorului aparține unui domeniu de mai sus &rarr; e-mailul este șters <strong>doar din aplicația locală</strong> și rămâne intact pe serverul IMAP.</li>
+                <li>Dacă adresa expeditorului NU este protejată &rarr; e-mailul se șterge <strong>atât din aplicație cât și din căsuța originală de pe server</strong>.</li>
+                <li>În oricare dintre situații, e-mailul <strong>nu va mai fi reimportat</strong> la o viitoare sincronizare.</li>
+              </ul>
+            </div>
           </div>
         )}
 
@@ -999,6 +1366,60 @@ export default function AdminPanel({
                   <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', display: 'block', marginTop: '4px' }}>
                     Dacă este completat, acest utilizator se va conecta și își va sincroniza propria căsuță IMAP. Dacă se lasă gol, va folosi căsuța globală a companiei.
                   </span>
+
+                  {/* PROPRIUL SERVER OUTGOING (SMTP) AL UTILIZATORULUI */}
+                  <div style={{ marginTop: "12px", paddingTop: "10px", borderTop: "1px dashed rgba(255,255,255,0.1)" }}>
+                    <span style={{ fontSize: "0.75rem", fontWeight: 700, color: "#60a5fa", display: "block", marginBottom: "8px" }}>
+                      📤 Outgoing (SMTP) Personalizat Utilizator:
+                    </span>
+                    <div style={{ display: "grid", gridTemplateColumns: "1.2fr 0.8fr", gap: "10px", marginBottom: "8px" }}>
+                      <div className="form-group">
+                        <label className="form-label" style={{ fontSize: "0.7rem" }}>Server SMTP (Opțional)</label>
+                        <input
+                          type="text"
+                          value={userFormSmtpHost}
+                          onChange={(e) => setUserFormSmtpHost(e.target.value)}
+                          placeholder="ex: mail.pbasig.ro"
+                          style={{ fontSize: "0.8rem", padding: "6px 8px" }}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label" style={{ fontSize: "0.7rem" }}>Port SMTP</label>
+                        <input
+                          type="number"
+                          value={userFormSmtpPort}
+                          onChange={(e) => setUserFormSmtpPort(e.target.value)}
+                          placeholder="465"
+                          style={{ fontSize: "0.8rem", padding: "6px 8px" }}
+                        />
+                      </div>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px" }}>
+                      <div className="form-group">
+                        <label className="form-label" style={{ fontSize: "0.7rem" }}>Utilizator SMTP Expeditor</label>
+                        <input
+                          type="text"
+                          value={userFormSmtpUser}
+                          onChange={(e) => setUserFormSmtpUser(e.target.value)}
+                          placeholder="Lăsați gol pt. a folosi IMAP"
+                          style={{ fontSize: "0.8rem", padding: "6px 8px" }}
+                        />
+                      </div>
+                      <div className="form-group">
+                        <label className="form-label" style={{ fontSize: "0.7rem" }}>Parolă SMTP</label>
+                        <input
+                          type="password"
+                          value={userFormSmtpPass}
+                          onChange={(e) => setUserFormSmtpPass(e.target.value)}
+                          placeholder={editingUser && editingUser.has_smtp_pass ? '•••••••• (Lăsați gol pt. păstrare)' : 'Parolă trimitere (sau IMAP)...'}
+                          style={{ fontSize: "0.8rem", padding: "6px 8px" }}
+                        />
+                      </div>
+                    </div>
+                    <span style={{ fontSize: "0.685rem", color: "var(--text-muted)", display: "block", marginTop: "4px" }}>
+                      Dacă lăsați gol, utilizatorul va expedia e-mailurile și link-urile securizate folosind credențialele căsuței sale IMAP sau serverul implicit.
+                    </span>
+                  </div>
                 </div>
               </div>
 
@@ -1140,7 +1561,7 @@ export default function AdminPanel({
                     title="Generează codul acum direct din calculator fără telefon"
                     onClick={async () => {
                       try {
-                        const res = await fetch(`/api/admin/users/${selectedUser2FA.id}/current-token`);
+                        const res = await fetch(`/api/admin/users/${selectedUser2FA.id}/current-token`, { credentials: 'include' });
                         const d = await res.json();
                         if (d.token) {
                           setVerifyTestCode(d.token);

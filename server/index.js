@@ -59,6 +59,7 @@ app.use(session({
   cookie: {
     secure: false, // http
     httpOnly: true,
+    sameSite: 'lax',
     maxAge: 24 * 60 * 60 * 1000 // 24 ore
   }
 }));
@@ -546,7 +547,11 @@ app.delete('/api/hierarchy/:id', requireAdmin, async (req, res) => {
 app.get('/api/admin/users', requireAdmin, async (req, res) => {
   try {
     const users = await dbAsync.all(`
-      SELECT u.id, u.username, u.display_name, u.email, u.role, u.job_title, u.hierarchy_id, u.imap_user, (CASE WHEN u.imap_pass IS NOT NULL AND u.imap_pass != '' THEN 1 ELSE 0 END) as has_imap_pass,
+      SELECT u.id, u.username, u.display_name, u.email, u.role, u.job_title, u.hierarchy_id,
+             u.imap_host, u.imap_port, u.imap_tls, u.imap_user, 
+             (CASE WHEN u.imap_pass IS NOT NULL AND u.imap_pass != '' THEN 1 ELSE 0 END) as has_imap_pass,
+             u.smtp_host, u.smtp_port, u.smtp_secure, u.smtp_user,
+             (CASE WHEN u.smtp_pass IS NOT NULL AND u.smtp_pass != '' THEN 1 ELSE 0 END) as has_smtp_pass,
              u.two_factor_enabled, u.created_at, u.last_login,
              h.name as hierarchy_name, h.color as hierarchy_color, h.level_depth
       FROM users u
@@ -575,8 +580,27 @@ app.post('/api/admin/users', requireAdmin, async (req, res) => {
     const hId = (hierarchy_id === '' || hierarchy_id === null || hierarchy_id === undefined) ? null : parseInt(hierarchy_id);
     const passHash = bcrypt.hashSync(password, 10);
     const result = await dbAsync.run(`
-      INSERT INTO users (username, display_name, password_hash, email, role, job_title, hierarchy_id, imap_host, imap_port, imap_tls, imap_user, imap_pass, smtp_host, smtp_port, smtp_secure, smtp_user, smtp_pass, two_factor_enabled)\n      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-    `, [username.trim(), display_name.trim(), passHash, email ? email.trim() : null, role || 'user', job_title ? job_title.trim() : null, hId, imap_host || null, imap_port ? parseInt(imap_port) : 993, imap_tls !== undefined ? (imap_tls ? 1 : 0) : 1, imap_user ? imap_user.trim() : null, imap_pass ? imap_pass.trim() : null, smtp_host || null, smtp_port ? parseInt(smtp_port) : 465, smtp_secure !== undefined ? (smtp_secure ? 1 : 0) : 1, smtp_user ? smtp_user.trim() : null, smtp_pass ? smtp_pass.trim() : null]);
+      INSERT INTO users (username, display_name, password_hash, email, role, job_title, hierarchy_id, imap_host, imap_port, imap_tls, imap_user, imap_pass, smtp_host, smtp_port, smtp_secure, smtp_user, smtp_pass, two_factor_enabled)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+    `, [
+      username.trim(), 
+      display_name.trim(), 
+      passHash, 
+      email ? email.trim() : null, 
+      role || 'user', 
+      job_title ? job_title.trim() : null, 
+      hId, 
+      imap_host ? imap_host.trim() : null, 
+      imap_port ? parseInt(imap_port) : 993, 
+      imap_tls !== undefined ? (imap_tls ? 1 : 0) : 1, 
+      imap_user ? imap_user.trim() : null, 
+      imap_pass ? imap_pass.trim() : null, 
+      smtp_host ? smtp_host.trim() : null, 
+      smtp_port ? parseInt(smtp_port) : 465, 
+      smtp_secure !== undefined ? (smtp_secure ? 1 : 0) : 1, 
+      smtp_user ? smtp_user.trim() : null, 
+      smtp_pass ? smtp_pass.trim() : null
+    ]);
 
     await dbAsync.run('INSERT INTO system_logs (level, message, source) VALUES (?, ?, ?)', [
       'INFO',
@@ -598,9 +622,39 @@ app.put('/api/admin/users/:id', requireAdmin, async (req, res) => {
 
     const hId = (hierarchy_id === '' || hierarchy_id === null || hierarchy_id === undefined) ? null : parseInt(hierarchy_id);
 
-    let query = 'UPDATE users SET display_name = ?, email = ?, role = ?, job_title = ?, hierarchy_id = ?, imap_host = ?, imap_port = ?, imap_tls = ?, imap_user = ?, smtp_host = ?, smtp_port = ?, smtp_secure = ?, smtp_user = ?';
-    let params = [display_name, email ? email.trim() : null, role || 'user', job_title ? job_title.trim() : null, hId, imap_host || null, imap_port ? parseInt(imap_port) : 993, imap_tls !== undefined ? (imap_tls ? 1 : 0) : 1, imap_user ? imap_user.trim() : null, smtp_host || null, smtp_port ? parseInt(smtp_port) : 465, smtp_secure !== undefined ? (smtp_secure ? 1 : 0) : 1, smtp_user ? smtp_user.trim() : null];
-    if (smtp_pass !== undefined && smtp_pass !== '') { query += ', smtp_pass = ?'; params.push(smtp_pass.trim()); }
+    let query = `UPDATE users SET 
+      display_name = ?, 
+      email = ?, 
+      role = ?, 
+      job_title = ?, 
+      hierarchy_id = ?, 
+      imap_host = ?, 
+      imap_port = ?, 
+      imap_tls = ?, 
+      imap_user = ?, 
+      smtp_host = ?, 
+      smtp_port = ?, 
+      smtp_secure = ?, 
+      smtp_user = ?`;
+    let params = [
+      display_name ? display_name.trim() : '', 
+      email ? email.trim() : null, 
+      role || 'user', 
+      job_title ? job_title.trim() : null, 
+      hId, 
+      imap_host ? imap_host.trim() : null, 
+      imap_port ? parseInt(imap_port) : 993, 
+      imap_tls !== undefined ? (imap_tls ? 1 : 0) : 1, 
+      imap_user ? imap_user.trim() : null, 
+      smtp_host ? smtp_host.trim() : null, 
+      smtp_port ? parseInt(smtp_port) : 465, 
+      smtp_secure !== undefined ? (smtp_secure ? 1 : 0) : 1, 
+      smtp_user !== undefined ? (smtp_user ? smtp_user.trim() : null) : null
+    ];
+    if (smtp_pass !== undefined && smtp_pass !== '') { 
+      query += ', smtp_pass = ?'; 
+      params.push(smtp_pass.trim()); 
+    }
     if (imap_pass !== undefined && imap_pass !== '') {
       query += ', imap_pass = ?';
       params.push(imap_pass.trim());
@@ -700,10 +754,10 @@ app.post('/api/admin/users/:id/toggle-2fa', requireAdmin, async (req, res) => {
 // 5. CONFIGURARE ȘI SINCRONIZARE IMAP
 // ========================================================
 
-// Citire setari IMAP
+// Citire setari IMAP & SMTP
 app.get('/api/settings/imap', async (req, res) => {
   try {
-    const row = await dbAsync.get('SELECT id, host, port, tls, username, auto_sync, sync_interval, last_sync FROM imap_settings WHERE id = 1');
+    const row = await dbAsync.get('SELECT id, host, port, tls, username, smtp_host, smtp_port, smtp_secure, smtp_user, (CASE WHEN smtp_pass IS NOT NULL AND smtp_pass != "" THEN 1 ELSE 0 END) as has_smtp_pass, (CASE WHEN password IS NOT NULL AND password != "" THEN 1 ELSE 0 END) as has_password, auto_sync, sync_interval, last_sync FROM imap_settings WHERE id = 1');
     res.json(row || {});
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -830,6 +884,47 @@ app.post('/api/user/imap/test', async (req, res) => {
     res.json(result);
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST testare conexiune SMTP pentru utilizatorul curent
+app.post('/api/user/smtp/test', async (req, res) => {
+  try {
+    if (!req.session.userId) return res.status(401).json({ error: 'Neautentificat' });
+
+    const host = req.body.host || req.body.smtp_host || 'mail.pbasig.ro';
+    const port = parseInt(req.body.port || req.body.smtp_port) || 465;
+    const secure = req.body.secure !== undefined ? req.body.secure : (req.body.smtp_secure !== undefined ? req.body.smtp_secure : 1);
+    const username = req.body.username || req.body.smtp_user;
+    let pass = req.body.password || req.body.smtp_pass;
+
+    // Daca parola lipseste din formular, o luam din baza de date a utilizatorului
+    if (!pass || !String(pass).trim()) {
+      const user = await dbAsync.get('SELECT smtp_pass, imap_pass FROM users WHERE id = ?', [req.session.userId]);
+      if (user) {
+        pass = (user.smtp_pass && user.smtp_pass.trim()) ? user.smtp_pass : user.imap_pass;
+      }
+    }
+
+    // Daca utilizatorul SMTP este gol, luam utilizatorul IMAP sau emailul
+    let authUser = username;
+    if (!authUser || !String(authUser).trim()) {
+      const user = await dbAsync.get('SELECT imap_user, email FROM users WHERE id = ?', [req.session.userId]);
+      if (user) {
+        authUser = user.imap_user || user.email;
+      }
+    }
+
+    const testRes = await testSmtpConnection({
+      smtp_host: host,
+      smtp_port: port,
+      smtp_secure: secure,
+      smtp_user: authUser,
+      smtp_pass: pass
+    });
+    res.json(testRes);
+  } catch (err) {
+    res.status(400).json({ success: false, error: err.message });
   }
 });
 
@@ -996,7 +1091,22 @@ app.get("/api/documents/download/:token", async (req, res) => {
     // Incrementare contor descărcări
     await dbAsync.run("UPDATE uploaded_documents SET download_count = download_count + 1 WHERE id = ?", [doc.id]);
 
-    res.download(filePath, doc.original_filename);
+    // Folosim dotfiles: 'allow' deoarece directorul ~/.inlocuitor_mail_simplificat incepe cu punct
+    res.download(filePath, doc.original_filename, { dotfiles: "allow" }, (err) => {
+      if (err) {
+        console.error("[Download Error]:", err);
+        if (!res.headersSent) {
+          try {
+            res.setHeader("Content-Disposition", `attachment; filename="${encodeURIComponent(doc.original_filename)}"`);
+            if (doc.mime_type) res.setHeader("Content-Type", doc.mime_type);
+            const stream = fs.createReadStream(filePath);
+            stream.pipe(res);
+          } catch (streamErr) {
+            res.status(500).send("Eroare la descărcare: " + streamErr.message);
+          }
+        }
+      }
+    });
   } catch (err) {
     res.status(500).send("Eroare la descărcare: " + err.message);
   }
@@ -1032,7 +1142,9 @@ app.post("/api/mail/send", async (req, res) => {
     // Construim URL-ul de bază al serverului
     const protocol = req.headers["x-forwarded-proto"] || req.protocol || "http";
     const hostHeader = req.headers["x-forwarded-host"] || req.headers.host;
-    const reqBaseUrl = `${protocol}://${hostHeader}`;
+    const reqBaseUrl = process.env.APP_URL 
+      || process.env.RENDER_EXTERNAL_URL 
+      || `${protocol}://${hostHeader}`;
 
     const sendResult = await sendEmailWithLinks({
       settings,
@@ -1112,12 +1224,13 @@ app.get('/api/emails', async (req, res) => {
     const { hierarchy_id, search, unread, flagged } = req.query;
 
     let query = `
-      SELECT e.id, e.message_id, e.sender_name, e.sender_email, e.recipient, e.subject, 
+      SELECT e.id, e.message_id, e.folder, e.sender_name, e.sender_email, e.recipient, e.subject, 
+             SUBSTR(e.body_text, 1, 150) as body_snippet,
              e.date_received, e.hierarchy_id, e.is_read, e.is_flagged, e.attachments_json,
              h.name as hierarchy_name, h.color as hierarchy_color, h.level_depth
       FROM emails e
       LEFT JOIN hierarchy_nodes h ON e.hierarchy_id = h.id
-      WHERE e.user_id = ?
+      WHERE (e.user_id = ? OR e.user_id IS NULL)
     `;
     const params = [req.session.userId];
 
@@ -1170,11 +1283,12 @@ app.get('/api/emails', async (req, res) => {
 // Detalii email individual
 app.get('/api/emails/:id', async (req, res) => {
   try {
+    if (!req.session.userId) return res.status(401).json({ error: 'Neautentificat' });
     const email = await dbAsync.get(`
       SELECT e.*, h.name as hierarchy_name, h.color as hierarchy_color, h.level_depth
       FROM emails e
       LEFT JOIN hierarchy_nodes h ON e.hierarchy_id = h.id
-      WHERE e.id = ? AND e.user_id = ?
+      WHERE e.id = ? AND (e.user_id = ? OR e.user_id IS NULL)
     `, [req.params.id, req.session.userId]);
 
     if (!email) {
@@ -1250,13 +1364,156 @@ app.put('/api/emails/:id/status', async (req, res) => {
   }
 });
 
-// Stergere email
+// Stergere email (cu stergere din IMAP si exceptii domenii)
 app.delete('/api/emails/:id', async (req, res) => {
   try {
     if (!req.session.userId) {
       return res.status(401).json({ error: "Trebuie să fiți autentificat." });
     }
-    const result = await dbAsync.run('DELETE FROM emails WHERE id = ? AND user_id = ?', [req.params.id, req.session.userId]);
+
+    // 1. Preluam emailul inainte de stergere
+    const email = await dbAsync.get(
+      'SELECT id, message_id, uid, sender_email, user_id FROM emails WHERE id = ? AND user_id = ?',
+      [req.params.id, req.session.userId]
+    );
+    if (!email) {
+      return res.status(404).json({ error: "E-mailul nu a fost găsit." });
+    }
+
+    // 2. Salvam in deleted_emails (sa nu reapara la sincronizare)
+    const senderDomain = email.sender_email ? email.sender_email.split('@').pop().toLowerCase() : '';
+    await dbAsync.run(
+      'INSERT OR IGNORE INTO deleted_emails (message_id, uid, user_id, sender_email) VALUES (?, ?, ?, ?)',
+      [email.message_id, email.uid, req.session.userId, email.sender_email]
+    );
+
+    // 3. Verificam daca domeniul expeditorului este in exceptii
+    let deletedFromImap = false;
+    let isException = false;
+    if (senderDomain) {
+      const exception = await dbAsync.get(
+        'SELECT id FROM delete_exceptions WHERE LOWER(domain) = ?',
+        [senderDomain]
+      );
+      isException = Boolean(exception);
+    }
+
+    // 4. Daca NU este in exceptii si avem UID, stergem si din IMAP
+    if (!isException && email.uid) {
+      try {
+        const targetUser = await dbAsync.get('SELECT * FROM users WHERE id = ?', [req.session.userId]);
+        const globalSettings = await dbAsync.get('SELECT * FROM imap_settings WHERE id = 1') || {};
+
+        const userImapSettings = {
+          host: targetUser.imap_host || globalSettings.host,
+          port: targetUser.imap_port || globalSettings.port || 993,
+          tls: targetUser.imap_tls !== undefined ? (targetUser.imap_tls !== 0) : (globalSettings.tls !== 0),
+          username: targetUser.imap_user || targetUser.email,
+          password: targetUser.imap_pass
+        };
+
+        if (userImapSettings.username && userImapSettings.password) {
+          const { deleteFromImap } = require('./imap');
+          const imapResult = await deleteFromImap(userImapSettings, email.uid);
+          deletedFromImap = imapResult.success;
+        }
+      } catch (imapErr) {
+        console.error('[DELETE] Eroare la stergerea din IMAP:', imapErr.message);
+        // Continuam cu stergerea locala chiar daca IMAP a esuat
+      }
+    }
+
+    // 5. Actualizam flag-ul deleted_from_imap
+    if (deletedFromImap) {
+      await dbAsync.run(
+        'UPDATE deleted_emails SET deleted_from_imap = 1 WHERE message_id = ? AND user_id = ?',
+        [email.message_id, req.session.userId]
+      );
+    }
+
+    // 6. Stergem din baza de date locala
+    await dbAsync.run('DELETE FROM emails WHERE id = ? AND user_id = ?', [req.params.id, req.session.userId]);
+
+    // Log
+    await dbAsync.run('INSERT INTO system_logs (level, message, source) VALUES (?, ?, ?)', [
+      'INFO',
+      `E-mail șters: "${email.message_id}" de la ${email.sender_email || 'necunoscut'}${isException ? ' (domeniu protejat - neșters din IMAP)' : deletedFromImap ? ' (șters și din IMAP)' : ' (doar local)'}`,
+      'EMAIL_DELETE'
+    ]);
+
+    res.json({
+      success: true,
+      deleted_from_imap: deletedFromImap,
+      is_protected_domain: isException
+    });
+  } catch (err) {
+    console.error('[DELETE] Eroare:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ========================================================
+// 6B. EXCEPȚII DE LA ȘTERGERE (Domenii protejate)
+// ========================================================
+
+// Lista exceptii
+app.get('/api/admin/delete-exceptions', requireAdmin, async (req, res) => {
+  try {
+    const exceptions = await dbAsync.all('SELECT * FROM delete_exceptions ORDER BY domain ASC');
+    res.json({ exceptions });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Adaugare exceptie
+app.post('/api/admin/delete-exceptions', requireAdmin, async (req, res) => {
+  try {
+    const { domain, description } = req.body;
+    if (!domain || !domain.trim()) {
+      return res.status(400).json({ error: 'Domeniul este obligatoriu.' });
+    }
+    const cleanDomain = domain.trim().toLowerCase().replace(/^@/, '');
+    
+    // Verificam daca exista deja
+    const existing = await dbAsync.get('SELECT id FROM delete_exceptions WHERE LOWER(domain) = ?', [cleanDomain]);
+    if (existing) {
+      return res.status(409).json({ error: `Domeniul "${cleanDomain}" există deja în lista de excepții.` });
+    }
+
+    const result = await dbAsync.run(
+      'INSERT INTO delete_exceptions (domain, description) VALUES (?, ?)',
+      [cleanDomain, description || '']
+    );
+
+    await dbAsync.run('INSERT INTO system_logs (level, message, source) VALUES (?, ?, ?)', [
+      'INFO',
+      `Domeniu adăugat la excepții de la ștergere: ${cleanDomain}`,
+      'ADMIN'
+    ]);
+
+    res.json({ success: true, id: result.id, domain: cleanDomain });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Stergere exceptie
+app.delete('/api/admin/delete-exceptions/:id', requireAdmin, async (req, res) => {
+  try {
+    const exception = await dbAsync.get('SELECT domain FROM delete_exceptions WHERE id = ?', [req.params.id]);
+    if (!exception) {
+      return res.status(404).json({ error: 'Excepția nu a fost găsită.' });
+    }
+
+    await dbAsync.run('DELETE FROM delete_exceptions WHERE id = ?', [req.params.id]);
+
+    await dbAsync.run('INSERT INTO system_logs (level, message, source) VALUES (?, ?, ?)', [
+      'INFO',
+      `Domeniu eliminat din excepții de la ștergere: ${exception.domain}`,
+      'ADMIN'
+    ]);
+
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

@@ -19,7 +19,12 @@ export default function AdminLoginModal({ isOpen, onClose, onLoginSuccess }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password })
       });
-      const data = await res.json();
+      let data = {};
+      try {
+        data = await res.json();
+      } catch (e) {
+        throw new Error('Eroare conexiune server (backend indisponibil sau răspuns invalid).');
+      }
 
       if (!res.ok) {
         throw new Error(data.error || 'Parola de administrare este incorectă.');

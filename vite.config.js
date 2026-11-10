@@ -10,6 +10,14 @@ export default defineConfig({
         target: 'http://localhost:3005',
         changeOrigin: true,
         secure: false,
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq, req) => {
+            // Forward cookies to backend
+            if (req.headers.cookie) {
+              proxyReq.setHeader('cookie', req.headers.cookie);
+            }
+          });
+        }
       }
     }
   }
