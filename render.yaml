@@ -3,14 +3,12 @@ services:
     name: inlocuitor-mail
     env: node
     plan: free
-    buildCommand: npm install && npm run build
+    region: frankfurt
+    buildCommand: npm install --build-from-source && npm run build
     startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        generateValue: false
-        value: 10000
       - key: SESSION_SECRET
         generateValue: true
     disk:
