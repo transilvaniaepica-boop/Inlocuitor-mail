@@ -13,6 +13,7 @@
     "build:full": "vite build"
   },
   "dependencies": {
+    "@libsql/client": "^0.18.0",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.4",
@@ -33,7 +34,6 @@
     "sqlite3": "^6.0.1",
     "vite": "^8.2.0"
   },
-  "devDependencies": {},
   "engines": {
     "node": "20.x"
   }
