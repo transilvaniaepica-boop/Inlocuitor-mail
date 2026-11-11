@@ -57,18 +57,22 @@ export default function AdminPanel({
   const [verifyTestCode, setVerifyTestCode] = useState('');
   const [verifyStatus, setVerifyStatus] = useState(null);
 
-  // Stari pentru Setari IMAP
+  // Stari pentru Setari IMAP & Expediere (SMTP / HTTPS APIs)
   const [imapSettings, setImapSettings] = useState({
     host: 'mail.pbasig.ro',
     port: 993,
     tls: 1,
     username: '',
     password: '',
+    mail_service_type: 'smtp',
     smtp_host: 'mail.pbasig.ro',
     smtp_port: 465,
     smtp_secure: 1,
     smtp_user: '',
     smtp_pass: '',
+    resend_api_key: '',
+    brevo_api_key: '',
+    api_sender_email: '',
     auto_sync: 1,
     sync_interval: 5
   });
@@ -937,68 +941,148 @@ export default function AdminPanel({
                 </button>
               </div>
 
-              {/* SECTIUNE OUTGOING SMTP */}
+              {/* SECTIUNE EXPEDIERE (OUTGOING: SMTP SAU HTTPS API) */}
               <div style={{ margin: "24px 0 16px 0", borderTop: "1px solid var(--border-color)", paddingTop: "18px" }}>
                 <h4 style={{ margin: "0 0 6px 0", fontSize: "1rem", color: "#60a5fa", display: "flex", alignItems: "center", gap: "8px" }}>
                   <Send size={16} />
-                  Configurare Server Outgoing (SMTP - Trimitere Mesaje & Link-uri)
+                  Configurare Expediere Mesaje (Outgoing - SMTP / HTTPS API)
                 </h4>
                 <p style={{ margin: "0 0 14px 0", fontSize: "0.785rem", color: "var(--text-muted)" }}>
-                  Serverul utilizat pentru trimiterea e-mailurilor și transmiterea automată a documentelor ca link-uri securizate.
+                  Alegeți modul de trimitere a e-mailurilor și documentelor ca link-uri securizate. Pe platforme cloud precum Render (Free Tier), se recomandă HTTPS API (Resend / Brevo) deoarece porturile SMTP clasice pot fi blocate.
                 </p>
 
-                <div style={{ display: "grid", gridTemplateColumns: "1.2fr 0.8fr", gap: "16px" }}>
-                  <div className="form-group">
-                    <label className="form-label">Gazdă SMTP (Server de trimitere)</label>
-                    <input
-                      type="text"
-                      value={imapSettings.smtp_host || ""}
-                      onChange={(e) => setImapSettings({ ...imapSettings, smtp_host: e.target.value })}
-                      placeholder="mail.pbasig.ro"
-                    />
-                  </div>
+                <div className="form-group" style={{ marginBottom: "16px" }}>
+                  <label className="form-label" style={{ fontWeight: 600 }}>Metodă de Expediere</label>
+                  <select
+                    value={imapSettings.mail_service_type || "smtp"}
+                    onChange={(e) => setImapSettings({ ...imapSettings, mail_service_type: e.target.value })}
+                    style={{ fontWeight: 500 }}
+                  >
+                    <option value="smtp">SMTP Clasic (Host, Port, SSL/TLS)</option>
+                    <option value="resend">Resend API (HTTPS Port 443 - Recomandat pt Render)</option>
+                    <option value="brevo">Brevo API / Sendinblue (HTTPS Port 443)</option>
+                  </select>
+                </div>
 
-                  <div className="form-group">
-                    <label className="form-label">Port SMTP & Securitate</label>
-                    <div style={{ display: "flex", gap: "8px" }}>
-                      <input
-                        type="number"
-                        style={{ width: "90px" }}
-                        value={imapSettings.smtp_port || 465}
-                        onChange={(e) => setImapSettings({ ...imapSettings, smtp_port: e.target.value })}
-                      />
-                      <select
-                        value={imapSettings.smtp_secure !== undefined ? imapSettings.smtp_secure : 1}
-                        onChange={(e) => setImapSettings({ ...imapSettings, smtp_secure: parseInt(e.target.value) })}
-                      >
-                        <option value={1}>SSL / TLS (Port 465)</option>
-                        <option value={0}>STARTTLS (Port 587)</option>
-                      </select>
+                {/* DACA METODA ESTE SMTP CLASIC */}
+                {(imapSettings.mail_service_type === 'smtp' || !imapSettings.mail_service_type) && (
+                  <div style={{ background: "rgba(255,255,255,0.03)", padding: "14px", borderRadius: "8px", border: "1px solid var(--border-color)" }}>
+                    <div style={{ display: "grid", gridTemplateColumns: "1.2fr 0.8fr", gap: "16px" }}>
+                      <div className="form-group">
+                        <label className="form-label">Gazdă SMTP (Server de trimitere)</label>
+                        <input
+                          type="text"
+                          value={imapSettings.smtp_host || ""}
+                          onChange={(e) => setImapSettings({ ...imapSettings, smtp_host: e.target.value })}
+                          placeholder="mail.pbasig.ro"
+                        />
+                      </div>
+
+                      <div className="form-group">
+                        <label className="form-label">Port SMTP & Securitate</label>
+                        <div style={{ display: "flex", gap: "8px" }}>
+                          <input
+                            type="number"
+                            style={{ width: "90px" }}
+                            value={imapSettings.smtp_port || 465}
+                            onChange={(e) => setImapSettings({ ...imapSettings, smtp_port: e.target.value })}
+                          />
+                          <select
+                            value={imapSettings.smtp_secure !== undefined ? imapSettings.smtp_secure : 1}
+                            onChange={(e) => setImapSettings({ ...imapSettings, smtp_secure: parseInt(e.target.value) })}
+                          >
+                            <option value={1}>SSL / TLS (Port 465)</option>
+                            <option value={0}>STARTTLS (Port 587)</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginTop: "12px" }}>
+                      <div className="form-group">
+                        <label className="form-label">Utilizator SMTP (Email Expeditor)</label>
+                        <input
+                          type="text"
+                          value={imapSettings.smtp_user || ""}
+                          onChange={(e) => setImapSettings({ ...imapSettings, smtp_user: e.target.value })}
+                          placeholder="office@domeniu.ro"
+                        />
+                      </div>
+
+                      <div className="form-group">
+                        <label className="form-label">Parolă SMTP</label>
+                        <input
+                          type="password"
+                          value={imapSettings.smtp_pass || ""}
+                          onChange={(e) => setImapSettings({ ...imapSettings, smtp_pass: e.target.value })}
+                          placeholder="Lăsați gol pentru a păstra parola actuală..."
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
 
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "16px", marginTop: "12px" }}>
-                  <div className="form-group">
-                    <label className="form-label">Utilizator SMTP (Email Expeditor)</label>
-                    <input
-                      type="text"
-                      value={imapSettings.smtp_user || ""}
-                      onChange={(e) => setImapSettings({ ...imapSettings, smtp_user: e.target.value })}
-                      placeholder="office@domeniu.ro"
-                    />
-                  </div>
+                {/* DACA METODA ESTE RESEND API */}
+                {imapSettings.mail_service_type === 'resend' && (
+                  <div style={{ background: "rgba(59, 130, 246, 0.05)", padding: "14px", borderRadius: "8px", border: "1px solid rgba(59, 130, 246, 0.2)" }}>
+                    <div className="form-group" style={{ marginBottom: "12px" }}>
+                      <label className="form-label">Resend API Key (re_...)</label>
+                      <input
+                        type="password"
+                        value={imapSettings.resend_api_key || ""}
+                        onChange={(e) => setImapSettings({ ...imapSettings, resend_api_key: e.target.value })}
+                        placeholder={imapSettings.has_resend_key ? "•••••••••••••••• (Cheia este setată. Lăsați gol pt neschimbat)" : "re_123456789..."}
+                      />
+                      <small style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "4px", display: "block" }}>
+                        Obțineți o cheie gratuită de la <a href="https://resend.com" target="_blank" rel="noreferrer" style={{ color: "#60a5fa" }}>resend.com</a>.
+                      </small>
+                    </div>
 
-                  <div className="form-group">
-                    <label className="form-label">Parolă SMTP</label>
-                    <input
-                      type="password"
-                      value={imapSettings.smtp_pass || ""}
-                      onChange={(e) => setImapSettings({ ...imapSettings, smtp_pass: e.target.value })}
-                      placeholder="Lăsați gol pentru a păstra parola actuală..."
-                    />
+                    <div className="form-group">
+                      <label className="form-label">Email Expeditor (From Address)</label>
+                      <input
+                        type="text"
+                        value={imapSettings.api_sender_email || ""}
+                        onChange={(e) => setImapSettings({ ...imapSettings, api_sender_email: e.target.value })}
+                        placeholder="onboarding@resend.dev sau contact@domeniul-tau.ro"
+                      />
+                      <small style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "4px", display: "block" }}>
+                        Dacă nu aveți domeniu verificat în Resend, folosiți <code>onboarding@resend.dev</code> (pentru teste către propriul cont) sau introduceți adresa domeniului verificat.
+                      </small>
+                    </div>
                   </div>
-                </div>
+                )}
+
+                {/* DACA METODA ESTE BREVO API */}
+                {imapSettings.mail_service_type === 'brevo' && (
+                  <div style={{ background: "rgba(16, 185, 129, 0.05)", padding: "14px", borderRadius: "8px", border: "1px solid rgba(16, 185, 129, 0.2)" }}>
+                    <div className="form-group" style={{ marginBottom: "12px" }}>
+                      <label className="form-label">Brevo API Key (xkeysib-...)</label>
+                      <input
+                        type="password"
+                        value={imapSettings.brevo_api_key || ""}
+                        onChange={(e) => setImapSettings({ ...imapSettings, brevo_api_key: e.target.value })}
+                        placeholder={imapSettings.has_brevo_key ? "•••••••••••••••• (Cheia este setată. Lăsați gol pt neschimbat)" : "xkeysib-..."}
+                      />
+                      <small style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "4px", display: "block" }}>
+                        Generați o cheie API v3 din contul Brevo (Sendinblue) la Settings &gt; SMTP &amp; API.
+                      </small>
+                    </div>
+
+                    <div className="form-group">
+                      <label className="form-label">Email Expeditor Verificat Brevo (Sender Email)</label>
+                      <input
+                        type="text"
+                        value={imapSettings.api_sender_email || ""}
+                        onChange={(e) => setImapSettings({ ...imapSettings, api_sender_email: e.target.value })}
+                        placeholder="office@domeniu.ro"
+                      />
+                      <small style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "4px", display: "block" }}>
+                        Trebuie să fie o adresă sau un domeniu validat în panoul Brevo la Send &gt; Senders &amp; IP.
+                      </small>
+                    </div>
+                  </div>
+                )}
 
                 {smtpTestResult && (
                   <div style={{
@@ -1011,9 +1095,11 @@ export default function AdminPanel({
                     color: smtpTestResult.success ? "#a7f3d0" : "#fca5a5"
                   }}>
                     {smtpTestResult.success ? (
-                      <div><strong>Conexiune SMTP reușită!</strong> Timp de răspuns: {smtpTestResult.latencyMs} ms. Serverul este gata de trimitere.</div>
+                      <div>
+                        <strong>Conexiune reușită ({smtpTestResult.serviceType ? smtpTestResult.serviceType.toUpperCase() : "OK"})!</strong> {smtpTestResult.message || `Timp de răspuns: ${smtpTestResult.latencyMs} ms. Serviciul este gata de expediere.`}
+                      </div>
                     ) : (
-                      <div><strong>Eroare SMTP:</strong> {smtpTestResult.error}</div>
+                      <div><strong>Eroare expediere:</strong> {smtpTestResult.error}</div>
                     )}
                   </div>
                 )}
@@ -1026,7 +1112,7 @@ export default function AdminPanel({
                     disabled={isTestingSmtp}
                   >
                     <Send size={14} className={isTestingSmtp ? "animate-spin" : ""} />
-                    {isTestingSmtp ? "Se testează..." : "Testează Conexiunea SMTP (Outgoing)"}
+                    {isTestingSmtp ? "Se testează..." : `Testează Conexiunea (${(imapSettings.mail_service_type || 'smtp').toUpperCase()})`}
                   </button>
 
                   <button type="submit" className="btn btn-primary">

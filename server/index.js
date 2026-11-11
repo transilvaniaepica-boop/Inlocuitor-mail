@@ -986,7 +986,15 @@ app.post('/api/imap/sync', async (req, res) => {
 
 app.get("/api/settings/mail", requireAdmin, async (req, res) => {
   try {
-    const row = await dbAsync.get("SELECT id, host, port, tls, username, smtp_host, smtp_port, smtp_secure, smtp_user, auto_sync, sync_interval, last_sync FROM imap_settings WHERE id = 1");
+    const row = await dbAsync.get(`
+      SELECT id, host, port, tls, username, 
+             smtp_host, smtp_port, smtp_secure, smtp_user, 
+             mail_service_type, resend_api_key, brevo_api_key, api_sender_email,
+             (CASE WHEN resend_api_key IS NOT NULL AND resend_api_key != '' THEN 1 ELSE 0 END) as has_resend_key,
+             (CASE WHEN brevo_api_key IS NOT NULL AND brevo_api_key != '' THEN 1 ELSE 0 END) as has_brevo_key,
+             auto_sync, sync_interval, last_sync 
+      FROM imap_settings WHERE id = 1
+    `);
     res.json({ settings: row || {} });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -995,9 +1003,28 @@ app.get("/api/settings/mail", requireAdmin, async (req, res) => {
 
 app.post("/api/settings/mail", requireAdmin, async (req, res) => {
   try {
-    const { host, port, tls, username, password, smtp_host, smtp_port, smtp_secure, smtp_user, smtp_pass, auto_sync, sync_interval } = req.body;
-    let query = "UPDATE imap_settings SET host = ?, port = ?, tls = ?, username = ?, smtp_host = ?, smtp_port = ?, smtp_secure = ?, smtp_user = ?, auto_sync = ?, sync_interval = ?";
-    let params = [host, parseInt(port) || 993, tls ? 1 : 0, username || "", smtp_host || "", parseInt(smtp_port) || 465, smtp_secure ? 1 : 0, smtp_user || "", auto_sync ? 1 : 0, parseInt(sync_interval) || 5];
+    const { 
+      host, port, tls, username, password, 
+      smtp_host, smtp_port, smtp_secure, smtp_user, smtp_pass, 
+      mail_service_type, resend_api_key, brevo_api_key, api_sender_email,
+      auto_sync, sync_interval 
+    } = req.body;
+
+    let query = "UPDATE imap_settings SET host = ?, port = ?, tls = ?, username = ?, smtp_host = ?, smtp_port = ?, smtp_secure = ?, smtp_user = ?, mail_service_type = ?, api_sender_email = ?, auto_sync = ?, sync_interval = ?";
+    let params = [
+      host, 
+      parseInt(port) || 993, 
+      tls ? 1 : 0, 
+      username || "", 
+      smtp_host || "", 
+      parseInt(smtp_port) || 465, 
+      smtp_secure ? 1 : 0, 
+      smtp_user || "", 
+      mail_service_type || "smtp",
+      api_sender_email || "",
+      auto_sync ? 1 : 0, 
+      parseInt(sync_interval) || 5
+    ];
 
     if (password && password.trim() !== "") {
       query += ", password = ?";
@@ -1006,6 +1033,14 @@ app.post("/api/settings/mail", requireAdmin, async (req, res) => {
     if (smtp_pass && smtp_pass.trim() !== "") {
       query += ", smtp_pass = ?";
       params.push(smtp_pass.trim());
+    }
+    if (resend_api_key !== undefined && resend_api_key.trim() !== "") {
+      query += ", resend_api_key = ?";
+      params.push(resend_api_key.trim());
+    }
+    if (brevo_api_key !== undefined && brevo_api_key.trim() !== "") {
+      query += ", brevo_api_key = ?";
+      params.push(brevo_api_key.trim());
     }
 
     query += " WHERE id = 1";
@@ -1019,9 +1054,11 @@ app.post("/api/settings/mail", requireAdmin, async (req, res) => {
 app.post("/api/smtp/test", requireAdmin, async (req, res) => {
   try {
     let settings = req.body;
-    if (!settings.smtp_pass) {
-      const cur = await dbAsync.get("SELECT smtp_pass, password FROM imap_settings WHERE id = 1");
-      if (cur) settings.smtp_pass = cur.smtp_pass || cur.password;
+    const cur = await dbAsync.get("SELECT smtp_pass, password, resend_api_key, brevo_api_key FROM imap_settings WHERE id = 1");
+    if (cur) {
+      if (!settings.smtp_pass) settings.smtp_pass = cur.smtp_pass || cur.password;
+      if (!settings.resend_api_key) settings.resend_api_key = cur.resend_api_key;
+      if (!settings.brevo_api_key) settings.brevo_api_key = cur.brevo_api_key;
     }
     const testRes = await testSmtpConnection(settings);
     res.json(testRes);

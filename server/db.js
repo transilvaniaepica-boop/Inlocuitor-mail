@@ -138,6 +138,10 @@ async function initDatabase() {
         smtp_secure INTEGER DEFAULT 1,
         smtp_user TEXT DEFAULT '',
         smtp_pass TEXT DEFAULT '',
+        mail_service_type TEXT DEFAULT 'smtp',
+        resend_api_key TEXT DEFAULT '',
+        brevo_api_key TEXT DEFAULT '',
+        api_sender_email TEXT DEFAULT '',
         auto_sync INTEGER DEFAULT 1,
         sync_interval INTEGER DEFAULT 5,
         last_sync DATETIME
@@ -259,6 +263,10 @@ async function initDatabase() {
     await safeAlter('ALTER TABLE imap_settings ADD COLUMN smtp_secure INTEGER DEFAULT 1');
     await safeAlter("ALTER TABLE imap_settings ADD COLUMN smtp_user TEXT DEFAULT ''");
     await safeAlter("ALTER TABLE imap_settings ADD COLUMN smtp_pass TEXT DEFAULT ''");
+    await safeAlter("ALTER TABLE imap_settings ADD COLUMN mail_service_type TEXT DEFAULT 'smtp'");
+    await safeAlter("ALTER TABLE imap_settings ADD COLUMN resend_api_key TEXT DEFAULT ''");
+    await safeAlter("ALTER TABLE imap_settings ADD COLUMN brevo_api_key TEXT DEFAULT ''");
+    await safeAlter("ALTER TABLE imap_settings ADD COLUMN api_sender_email TEXT DEFAULT ''");
     await safeAlter('ALTER TABLE emails ADD COLUMN user_id INTEGER');
 
     // Initializare parola admin (admin1234)
